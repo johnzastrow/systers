@@ -1,0 +1,18 @@
+[package]
+name = "systers"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rusqlite = { version = "0.31", features = ["bundled"] }
+chrono = "0.4"
+sysinfo = "0.30"
+anyhow = "1.0"
+
+[[bin]]
+name = "syswriter"
+path = "src/bin/syswriter.rs"
+
+[[bin]]
+name = "sysreport"
+path = "src/bin/sysreport.rs"
