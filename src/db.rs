@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
-use rusqlite::{Connection, params};
 use chrono::{DateTime, Utc};
+use rusqlite::{params, Connection};
 use std::path::Path;
 
 /// Database schema version
@@ -33,17 +33,18 @@ pub struct LogEntry {
 
 /// Initialize the database with required schema
 pub fn init_database<P: AsRef<Path>>(db_path: P) -> Result<Connection> {
-    let conn = Connection::open(db_path)
-        .context("Failed to open database")?;
-    
+    let path_ref = db_path.as_ref();
+    let conn = Connection::open(path_ref).context("Failed to open database")?;
+
     // Create schema
     conn.execute(
         "CREATE TABLE IF NOT EXISTS schema_version (
-            version INTEGER PRIMARY KEY
+            version INTEGER PRIMARY KEY,
+            app_version TEXT
         )",
         [],
     )?;
-    
+
     conn.execute(
         "CREATE TABLE IF NOT EXISTS system_metrics (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -61,7 +62,7 @@ pub fn init_database<P: AsRef<Path>>(db_path: P) -> Result<Connection> {
         )",
         [],
     )?;
-    
+
     conn.execute(
         "CREATE TABLE IF NOT EXISTS log_entries (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -72,32 +73,44 @@ pub fn init_database<P: AsRef<Path>>(db_path: P) -> Result<Connection> {
         )",
         [],
     )?;
-    
+
     // Create indices for better query performance
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_metrics_timestamp 
          ON system_metrics(timestamp)",
         [],
     )?;
-    
+
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_logs_timestamp 
          ON log_entries(timestamp)",
         [],
     )?;
-    
+
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_logs_level 
          ON log_entries(level)",
         [],
     )?;
-    
-    // Store schema version
+
+    // Store schema version and app version
     conn.execute(
-        "INSERT OR REPLACE INTO schema_version (version) VALUES (?1)",
-        params![SCHEMA_VERSION],
+        "INSERT OR REPLACE INTO schema_version (version, app_version) VALUES (?1, ?2)",
+        params![SCHEMA_VERSION, crate::VERSION],
     )?;
-    
+
+    // Set restrictive permissions on database file (Unix only)
+    // Skip for in-memory databases
+    #[cfg(unix)]
+    {
+        if path_ref.to_str() != Some(":memory:") {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(path_ref)?.permissions();
+            perms.set_mode(0o600); // Read/write for owner only
+            std::fs::set_permissions(path_ref, perms)?;
+        }
+    }
+
     Ok(conn)
 }
 
@@ -153,38 +166,39 @@ pub fn query_metrics(
                 load_avg_1min, load_avg_5min, load_avg_15min
          FROM system_metrics 
          WHERE timestamp >= ?1 AND timestamp <= ?2
-         ORDER BY timestamp DESC"
+         ORDER BY timestamp DESC",
     )?;
-    
-    let metrics_iter = stmt.query_map(
-        params![start.to_rfc3339(), end.to_rfc3339()],
-        |row| {
-            let timestamp_str: String = row.get(0)?;
-            let timestamp = DateTime::parse_from_rfc3339(&timestamp_str)
-                .unwrap()
-                .with_timezone(&Utc);
-            
-            Ok(SystemMetrics {
-                timestamp,
-                cpu_usage: row.get(1)?,
-                memory_total: row.get(2)?,
-                memory_used: row.get(3)?,
-                memory_available: row.get(4)?,
-                disk_total: row.get(5)?,
-                disk_used: row.get(6)?,
-                process_count: row.get(7)?,
-                load_avg_1min: row.get(8)?,
-                load_avg_5min: row.get(9)?,
-                load_avg_15min: row.get(10)?,
-            })
-        },
-    )?;
-    
+
+    let metrics_iter = stmt.query_map(params![start.to_rfc3339(), end.to_rfc3339()], |row| {
+        let timestamp_str: String = row.get(0)?;
+        let timestamp = DateTime::parse_from_rfc3339(&timestamp_str)
+            .map_err(|e| rusqlite::Error::FromSqlConversionFailure(
+                0,
+                rusqlite::types::Type::Text,
+                Box::new(e),
+            ))?
+            .with_timezone(&Utc);
+
+        Ok(SystemMetrics {
+            timestamp,
+            cpu_usage: row.get(1)?,
+            memory_total: row.get(2)?,
+            memory_used: row.get(3)?,
+            memory_available: row.get(4)?,
+            disk_total: row.get(5)?,
+            disk_used: row.get(6)?,
+            process_count: row.get(7)?,
+            load_avg_1min: row.get(8)?,
+            load_avg_5min: row.get(9)?,
+            load_avg_15min: row.get(10)?,
+        })
+    })?;
+
     let mut results = Vec::new();
     for metric in metrics_iter {
         results.push(metric?);
     }
-    
+
     Ok(results)
 }
 
@@ -196,13 +210,17 @@ pub fn query_logs(
     level_filter: Option<&str>,
 ) -> Result<Vec<LogEntry>> {
     let mut results = Vec::new();
-    
+
     let parse_row = |row: &rusqlite::Row| -> rusqlite::Result<LogEntry> {
         let timestamp_str: String = row.get(0)?;
         let timestamp = DateTime::parse_from_rfc3339(&timestamp_str)
-            .unwrap()
+            .map_err(|e| rusqlite::Error::FromSqlConversionFailure(
+                0,
+                rusqlite::types::Type::Text,
+                Box::new(e),
+            ))?
             .with_timezone(&Utc);
-        
+
         Ok(LogEntry {
             timestamp,
             level: row.get(1)?,
@@ -210,20 +228,20 @@ pub fn query_logs(
             message: row.get(3)?,
         })
     };
-    
+
     if let Some(level) = level_filter {
         let mut stmt = conn.prepare(
             "SELECT timestamp, level, source, message
              FROM log_entries 
              WHERE timestamp >= ?1 AND timestamp <= ?2 AND level = ?3
-             ORDER BY timestamp DESC"
+             ORDER BY timestamp DESC",
         )?;
-        
+
         let logs_iter = stmt.query_map(
             params![start.to_rfc3339(), end.to_rfc3339(), level],
             parse_row,
         )?;
-        
+
         for log in logs_iter {
             results.push(log?);
         }
@@ -232,18 +250,15 @@ pub fn query_logs(
             "SELECT timestamp, level, source, message
              FROM log_entries 
              WHERE timestamp >= ?1 AND timestamp <= ?2
-             ORDER BY timestamp DESC"
+             ORDER BY timestamp DESC",
         )?;
-        
-        let logs_iter = stmt.query_map(
-            params![start.to_rfc3339(), end.to_rfc3339()],
-            parse_row,
-        )?;
-        
+
+        let logs_iter = stmt.query_map(params![start.to_rfc3339(), end.to_rfc3339()], parse_row)?;
+
         for log in logs_iter {
             results.push(log?);
         }
     }
-    
+
     Ok(results)
 }

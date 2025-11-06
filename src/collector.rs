@@ -1,44 +1,46 @@
+use crate::config::{CPU_MEASUREMENT_DELAY_MS, MAX_LOG_LINES_PER_FILE};
+use crate::db::{LogEntry, SystemMetrics};
 use anyhow::{Context, Result};
 use chrono::Utc;
-use sysinfo::{System, Disks};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
-use crate::db::{SystemMetrics, LogEntry};
+use sysinfo::{Disks, System};
 
 /// Collect current system metrics
 pub fn collect_system_metrics() -> Result<SystemMetrics> {
     let mut sys = System::new_all();
-    
+
     // Refresh to get accurate data
-    std::thread::sleep(std::time::Duration::from_millis(200));
+    // Sleep to allow sysinfo to calculate accurate CPU usage (needs one refresh cycle)
+    std::thread::sleep(std::time::Duration::from_millis(CPU_MEASUREMENT_DELAY_MS));
     sys.refresh_cpu();
     sys.refresh_memory();
-    
+
     // Get CPU usage (average across all cores)
     let cpu_usage = sys.global_cpu_info().cpu_usage();
-    
+
     // Get memory info (in bytes)
     let memory_total = sys.total_memory();
     let memory_used = sys.used_memory();
     let memory_available = sys.available_memory();
-    
+
     // Get disk info (sum across all disks)
     let disks = Disks::new_with_refreshed_list();
     let mut disk_total = 0u64;
     let mut disk_used = 0u64;
-    
+
     for disk in &disks {
         disk_total += disk.total_space();
         disk_used += disk.total_space().saturating_sub(disk.available_space());
     }
-    
+
     // Get process count
     let process_count = sys.processes().len();
-    
+
     // Get load averages
     let load_avg = System::load_average();
-    
+
     Ok(SystemMetrics {
         timestamp: Utc::now(),
         cpu_usage,
@@ -55,18 +57,20 @@ pub fn collect_system_metrics() -> Result<SystemMetrics> {
 }
 
 /// Parse system log file for errors and warnings
-pub fn collect_log_entries<P: AsRef<Path>>(log_path: P, max_entries: usize) -> Result<Vec<LogEntry>> {
-    let file = File::open(log_path.as_ref())
-        .context("Failed to open log file")?;
+pub fn collect_log_entries<P: AsRef<Path>>(
+    log_path: P,
+    max_entries: usize,
+) -> Result<Vec<LogEntry>> {
+    let file = File::open(log_path.as_ref()).context("Failed to open log file")?;
     let reader = BufReader::new(file);
-    
+
     let mut entries = Vec::new();
     let timestamp = Utc::now();
-    
+
     // Parse log file (simplified - assumes syslog format)
     for line in reader.lines().take(max_entries) {
         let line = line?;
-        
+
         // Look for error/warning patterns
         let (level, should_include) = if line.to_lowercase().contains("error") {
             ("ERROR", true)
@@ -79,7 +83,7 @@ pub fn collect_log_entries<P: AsRef<Path>>(log_path: P, max_entries: usize) -> R
         } else {
             ("INFO", false)
         };
-        
+
         if should_include {
             entries.push(LogEntry {
                 timestamp,
@@ -89,14 +93,14 @@ pub fn collect_log_entries<P: AsRef<Path>>(log_path: P, max_entries: usize) -> R
             });
         }
     }
-    
+
     Ok(entries)
 }
 
 /// Scan common log file locations for issues
 pub fn scan_system_logs() -> Result<Vec<LogEntry>> {
     let mut all_entries = Vec::new();
-    
+
     // Common log file locations on Linux
     let log_paths = vec![
         "/var/log/syslog",
@@ -104,15 +108,15 @@ pub fn scan_system_logs() -> Result<Vec<LogEntry>> {
         "/var/log/kern.log",
         "/var/log/auth.log",
     ];
-    
+
     for log_path in log_paths {
         if Path::new(log_path).exists() {
-            match collect_log_entries(log_path, 1000) {
+            match collect_log_entries(log_path, MAX_LOG_LINES_PER_FILE) {
                 Ok(mut entries) => all_entries.append(&mut entries),
                 Err(e) => eprintln!("Warning: Could not read {}: {}", log_path, e),
             }
         }
     }
-    
+
     Ok(all_entries)
 }

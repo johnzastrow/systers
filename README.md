@@ -9,6 +9,48 @@ Systers consists of two complementary utilities that work together:
 1. **syswriter** - A data collector that gathers system metrics and log information, storing them in a SQLite database
 2. **sysreport** - A report generator that analyzes the collected data and produces formatted summaries
 
+```mermaid
+graph LR
+    A[Linux System] -->|metrics & logs| B[syswriter]
+    B -->|store| C[(SQLite DB)]
+    C -->|query| D[sysreport]
+    D -->|display| E[Terminal Report]
+
+    style A fill:#e1f5ff
+    style B fill:#b3e5fc
+    style C fill:#81d4fa
+    style D fill:#4fc3f7
+    style E fill:#29b6f6
+```
+
+### Data Flow
+
+```mermaid
+flowchart TD
+    Start([syswriter execution]) --> Collect[Collect System Metrics]
+    Collect --> |CPU, Memory, Disk, Load| Metrics[SystemMetrics struct]
+
+    Start --> Scan[Scan Log Files]
+    Scan --> |/var/log/*| Parse[Parse for errors/warnings]
+    Parse --> Logs[LogEntry structs]
+
+    Metrics --> Store[Insert into DB]
+    Logs --> Store
+    Store --> DB[(~/.systers.db)]
+
+    DB --> Query{sysreport execution}
+    Query --> |time range| Fetch[Query metrics & logs]
+    Fetch --> Analyze[Calculate statistics]
+    Analyze --> Detect[Detect issues]
+    Detect --> Format[Format report]
+    Format --> Display[Display to terminal]
+
+    style Start fill:#c8e6c9
+    style DB fill:#81c784
+    style Query fill:#66bb6a
+    style Display fill:#4caf50
+```
+
 ## Features
 
 - **System Metrics Collection**: CPU usage, memory usage, disk space, process counts, and load averages
@@ -153,9 +195,40 @@ Memory Usage:
 
 The SQLite database contains three tables:
 
-- **schema_version**: Tracks database schema version
+- **schema_version**: Tracks database schema version and application version
 - **system_metrics**: Stores system metrics with timestamps
 - **log_entries**: Stores notable log entries (errors, warnings, critical issues)
+
+```mermaid
+erDiagram
+    schema_version {
+        INTEGER version PK
+        TEXT app_version
+    }
+
+    system_metrics {
+        INTEGER id PK
+        TEXT timestamp
+        REAL cpu_usage
+        INTEGER memory_total
+        INTEGER memory_used
+        INTEGER memory_available
+        INTEGER disk_total
+        INTEGER disk_used
+        INTEGER process_count
+        REAL load_avg_1min
+        REAL load_avg_5min
+        REAL load_avg_15min
+    }
+
+    log_entries {
+        INTEGER id PK
+        TEXT timestamp
+        TEXT level
+        TEXT source
+        TEXT message
+    }
+```
 
 ## Configuration
 
@@ -193,6 +266,15 @@ cargo fmt
 cargo run --bin syswriter
 cargo run --bin sysreport -- --hours 12
 ```
+
+## Documentation
+
+Additional documentation is available in the `docs/` directory:
+
+- [TODO.md](docs/TODO.md) - Planned improvements and enhancements
+- [CHANGELOG.md](docs/CHANGELOG.md) - Version history and changes
+- [REQUIREMENTS.md](docs/REQUIREMENTS.md) - Detailed project requirements
+- [CLAUDE.md](CLAUDE.md) - Developer guidance for Claude Code
 
 ## License
 

@@ -1,0 +1,8 @@
+git config --list
+git config --global user.name "JohnZastrow"
+git config --global user.email "br8kwall@gmail.com"
+git config --global core.editor nano
+git config --global init.defaultBranch main
+git config --list
+cat .gitconfig
+git config user.name
