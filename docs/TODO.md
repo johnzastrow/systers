@@ -18,7 +18,7 @@ Added `cleanup_old_data()` function with configurable retention period.
 Created `src/config.rs` with all configuration constants.
 
 ### ✅ 4. Improve log parsing accuracy
-**Status:** Completed in v0.3.0 (unreleased)
+**Status:** Completed in v0.3.0
 Implemented regex-based pattern matching with timestamp extraction and false positive reduction.
 
 ### ✅ 5. Add test coverage
@@ -26,11 +26,11 @@ Implemented regex-based pattern matching with timestamp extraction and false pos
 Added 22 comprehensive tests across all modules.
 
 ### ✅ 6. Eliminate database query code duplication
-**Status:** Completed in v0.3.0 (unreleased)
+**Status:** Completed in v0.3.0
 Consolidated `query_logs()` function to eliminate duplicated code.
 
 ### ✅ 7. Add structured logging
-**Status:** Completed in v0.3.0 (unreleased)
+**Status:** Completed in v0.3.0
 Replaced print statements with `log` crate, configurable via `RUST_LOG`.
 
 ### ✅ 8. Improve command-line argument parsing
@@ -38,49 +38,53 @@ Replaced print statements with `log` crate, configurable via `RUST_LOG`.
 Implemented professional CLI with `clap` crate.
 
 ### ✅ 9. Make log file paths configurable
-**Status:** Completed in v0.3.0 (unreleased)
+**Status:** Completed in v0.4.0
 Implemented custom log path support via `--log-paths` CLI flag and `SYSTERS_LOG_PATHS` environment variable. Added comprehensive tests for the feature.
+
+### ✅ 10. Add report export functionality
+**Status:** Completed in v0.4.0
+Implemented `--output` and `--format` flags for sysreport. Added JSON and text export formats with full serialization support. Future formats (HTML, CSV) and delivery methods (email, webhooks) can be added later as needed.
+
+### ✅ 11. Move configurations into a YAML file
+**Status:** Completed in v0.4.0
+Implemented comprehensive YAML configuration system with sensible Debian defaults. Added `Config` struct with full serialization support, automatic loading from multiple locations (./systers.yaml, ~/.config/systers/config.yaml, /etc/systers/config.yaml), and `--generate-config` flag to create configuration files. Includes example configurations for Debian, RHEL, and custom scenarios.
 
 ---
 
 ## High Priority
 
-1. Move configurations into a YAML file. Include sensible defaults for a Debian system
-2. Implement more system checks
-   a. Directories with the most changes over time (growing or shrinking in size. 3 levels deep from / )
-   b. Mail messages
-   c. processes that use the most network upload / download / chattiness
-   d. processes with the most disk i/o
-   e. packages that need updating
-   f. smart disk health
-   g. systemd logs
-   h. hardware info
-   i. get ideas from the /proc directory
-   
-   
-   
-4. 
+### 12. Implement enhanced system checks
+**Status:** In Progress (Partial completion in v0.4.0)
+
+**Completed in v0.4.0:**
+- ✅ e. Packages that need updating (apt/dnf support)
+- ✅ f. SMART disk health (via smartctl)
+- ✅ g. Systemd logs and service status
+- ✅ a. Top directories by size (basic implementation)
+- ✅ External tool detection and installation prompts
+- ✅ `--system-checks` flag to enable enhanced checks
+- ✅ `--show-tools` flag to list available/missing tools
+
+**Still To Do:**
+- [ ] a. Track directory size changes over time (trending)
+- [ ] b. Mail message monitoring
+- [ ] c. Process network usage tracking
+- [ ] d. Process disk I/O monitoring
+- [ ] h. Detailed hardware information from /proc
+- [ ] i. Additional /proc-based checks (interrupts, meminfo details, etc.)
+- [ ] Store system check results in database
+- [ ] Display system check results in reports
+- [ ] Add configuration options for which checks to run
 
 ## Medium Priority
 
-### 10. Add report export functionality
-**Location:** New feature in `src/reporter.rs` and `src/bin/sysreport.rs`
-
-**Context:** REQUIREMENTS.md mentions email delivery and file export.
-
-**Proposed Features:**
-- `--output <file>` flag to save reports to file
-- `--format json` for machine-readable output
-- `--format html` for web viewing
-- `--format csv` for spreadsheet import
-- Email delivery via SMTP (configurable)
-- Webhook support for integration with monitoring systems
+(All medium-priority items have been completed - see "Completed Items" section above)
 
 ---
 
 ## Low Priority
 
-### 11. Optimize database schema
+### 12. Optimize database schema
 **Location:** `src/db.rs:40-74`
 
 **Current Issues:**
@@ -94,13 +98,13 @@ Implemented custom log path support via `--log-paths` CLI flag and `SYSTERS_LOG_
 - Store timestamps as INTEGER (Unix epoch)
 - Add `hostname` TEXT field to both tables
 - Add database migration support for schema changes
-- Bump `SCHEMA_VERSION` to 2
+- Bump `SCHEMA_VERSION` to 3
 
 **Note:** Requires migration logic for existing databases.
 
 ---
 
-### 12. Document CPU collection delay
+### 13. Document CPU collection delay
 **Location:** `src/collector.rs:13`
 
 **Issue:** The 200ms sleep is necessary but not explained.
@@ -118,8 +122,8 @@ std::thread::sleep(std::time::Duration::from_millis(200));
 
 ---
 
-### 13. Improve error messages
-**Location:** Throughout, especially `src/bin/syswriter.rs:64`, `src/collector.rs:112`
+### 14. Improve error messages
+**Location:** Throughout, especially `src/bin/syswriter.rs`, `src/collector.rs`
 
 **Issue:** Error messages don't provide actionable guidance.
 
@@ -155,7 +159,7 @@ Error: Database not found at /home/user/.systers.db
 
 ---
 
-### 14. Security considerations
+### 15. Security considerations
 **Location:** Documentation and potentially `src/collector.rs`
 
 **Issues:**

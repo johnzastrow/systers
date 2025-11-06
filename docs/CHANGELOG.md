@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Enhanced System Checks** - Optional deep system monitoring with external tools
+  - `--system-checks` flag to enable enhanced monitoring
+  - `--show-tools` flag to list available and missing external tools
+  - Package update checks (apt for Debian/Ubuntu, dnf for RHEL/Fedora)
+  - Systemd service status monitoring with failed service detection
+  - SMART disk health monitoring via smartctl (requires sudo)
+  - Top directories by size analysis
+  - External tool detection with installation hints
+  - Graceful fallback when tools are not available
+- New `system_checks` module with helper functions for system analysis
+
+### Changed
+- syswriter now reports enhanced system information when --system-checks flag is used
+- User-friendly messages guide users to install optional tools
+
+## [0.4.0] - 2025-11-06
+
+### Added
+- **YAML Configuration System** - Comprehensive configuration file support
+  - `Config` struct with sub-sections: database, thresholds, collection, display, retention
+  - Automatic config loading from multiple locations (./systers.yaml, ~/.config/systers/config.yaml, /etc/systers/config.yaml)
+  - `--generate-config <PATH>` flag to generate default configuration files
+  - `config.example.yaml` with fully documented examples for Debian, RHEL, and custom scenarios
+  - Sensible defaults optimized for Debian/Ubuntu systems
+- **Report Export Functionality** - Multiple output formats for reports
+  - `--output <FILE>` flag for sysreport to save reports to files
+  - `--format <FORMAT>` flag supporting `text` and `json` formats
+  - JSON export for machine-readable output and automation
+  - Full serialization support for all data structures (SystemMetrics, LogEntry, MetricsReport, LogReport)
+  - FullReport structure combining metrics and logs for complete exports
+- **Enhanced Log Path Configuration** - Additional tests and documentation
+  - 3 comprehensive tests for `scan_system_logs_with_paths()` function
+  - Tests for custom paths, default paths, and non-existent paths
+  - Better validation and error handling for log file paths
+
+### Changed
+- Configuration system refactored to support both YAML files and legacy constants
+- All report data structures now implement `Serialize` trait
+- Documentation significantly expanded with configuration examples
+- README updated with comprehensive configuration section
+
+### Dependencies
+- serde (1.0) - Serialization framework with derive macros
+- serde_json (1.0) - JSON serialization for report exports
+- serde_yaml (0.9) - YAML parsing for configuration files
+
 ## [0.3.0] - 2025-11-06
 
 ### Added
@@ -125,7 +172,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Fixed** for any bug fixes
 - **Security** for vulnerability fixes
 
-[Unreleased]: https://github.com/johnzastrow/systers/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/johnzastrow/systers/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/johnzastrow/systers/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/johnzastrow/systers/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/johnzastrow/systers/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/johnzastrow/systers/releases/tag/v0.1.0

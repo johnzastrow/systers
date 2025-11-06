@@ -117,9 +117,53 @@ syswriter --no-cleanup
 # Custom retention period (default: 30 days)
 syswriter --retention-days 60
 
+# Enable enhanced system checks (requires external tools)
+syswriter --system-checks
+
+# Show available and missing external tools
+syswriter --show-tools
+
 # Check version
 syswriter --version
 ```
+
+#### Enhanced System Checks
+
+Systers supports optional enhanced system checks that provide deeper insights into system health. These checks require external tools that may not be installed by default.
+
+**Check which tools are available:**
+```bash
+syswriter --show-tools
+```
+
+This will show:
+- ✓ Available tools you can use now
+- ✗ Missing tools with installation instructions
+
+**Run enhanced checks:**
+```bash
+# Basic collection (default)
+syswriter
+
+# With enhanced system checks
+syswriter --system-checks
+```
+
+**Enhanced checks include:**
+- **Package Updates**: Checks for available system updates (apt/dnf)
+- **Systemd Services**: Reports failed services and service status
+- **SMART Disk Health**: Monitors disk health using smartctl (requires sudo)
+- **Directory Sizes**: Identifies large directories
+
+**External Tools:**
+- `smartctl` - SMART disk health monitoring
+  - Install: `sudo apt install smartmontools` (Debian/Ubuntu)
+- `journalctl` - Systemd journal access (usually pre-installed)
+- `apt` - Package management (Debian/Ubuntu)
+- `dnf` - Package management (RHEL/Fedora)
+- `du` - Directory size analysis (usually pre-installed)
+
+**Note:** Enhanced checks are optional. Basic system monitoring works without any external tools.
 
 #### Logging Configuration
 
@@ -235,6 +279,35 @@ The report includes:
 - Detected issues with severity indicators
 - Actionable recommendations
 
+#### Exporting Reports
+
+Reports can be exported to files in different formats for archiving, automation, or integration with other tools:
+
+```bash
+# Export to JSON format (machine-readable)
+sysreport --format json --output report.json
+
+# Export to text file
+sysreport --format text --output report.txt
+
+# Export JSON to stdout (pipe to other tools)
+sysreport --format json | jq '.metrics.avg_cpu_usage'
+
+# Export with custom time range
+sysreport --hours 168 --format json --output weekly-report.json
+```
+
+**Supported Formats:**
+- `text` - Human-readable text format (default)
+- `json` - JSON format for automation and integration
+
+**Use Cases:**
+- Archive reports for historical analysis
+- Integrate with monitoring dashboards
+- Process data with custom scripts
+- Email reports as attachments
+- Feed data into analytics platforms
+
 ### Example Output
 
 ```
@@ -300,18 +373,85 @@ erDiagram
 
 ## Configuration
 
+Systers can be configured using YAML configuration files for persistent settings, or via environment variables and command-line flags for one-time overrides.
+
+### Configuration File
+
+Systers looks for configuration files in these locations (in order):
+1. `./systers.yaml` (current directory)
+2. `~/.config/systers/config.yaml` (user config)
+3. `/etc/systers/config.yaml` (system config)
+4. Built-in defaults (if no config file is found)
+
+To generate a default configuration file:
+
+```bash
+# Generate config in current directory
+syswriter --generate-config systers.yaml
+
+# Generate config in user config directory
+mkdir -p ~/.config/systers
+syswriter --generate-config ~/.config/systers/config.yaml
+
+# Generate config for system-wide use
+sudo mkdir -p /etc/systers
+sudo syswriter --generate-config /etc/systers/config.yaml
+```
+
+See `config.example.yaml` for a fully documented configuration template with examples for:
+- Debian/Ubuntu systems (default)
+- RHEL/CentOS/Fedora systems
+- Custom application monitoring
+- High-sensitivity monitoring
+- Production server configurations
+
+### Configuration Options
+
+The YAML configuration file includes:
+
+**Database Settings:**
+- Database file path
+
+**Thresholds:**
+- CPU warning threshold (percentage)
+- Memory warning threshold (percentage)
+- Disk warning threshold (percentage)
+- Load average warning threshold
+- Error count threshold for recommendations
+
+**Collection Settings:**
+- Log file paths to scan
+- Maximum log lines per file
+- CPU measurement delay
+
+**Display Settings:**
+- Maximum recent errors to show in reports
+
+**Retention:**
+- Data retention period (days)
+
 ### Environment Variables
 
-- `SYSTERS_DB_PATH`: Override the default database location (default: `~/.systers.db`)
-- `HOME`: Used to determine default database location if `SYSTERS_DB_PATH` is not set
+Environment variables override configuration file settings:
 
-### Log Files Scanned
+- `SYSTERS_DB_PATH`: Override the database location
+- `SYSTERS_LOG_PATHS`: Override log file paths (colon-separated)
+- `HOME`: Used to determine default database location
+- `RUST_LOG`: Configure logging level (error, warn, info, debug)
 
-syswriter scans these common Linux log files (if they exist and are readable):
+### Default Log Files Scanned
+
+For Debian/Ubuntu systems (default):
 - `/var/log/syslog`
 - `/var/log/messages`
 - `/var/log/kern.log`
 - `/var/log/auth.log`
+
+For RHEL/CentOS/Fedora systems, edit the configuration file to use:
+- `/var/log/messages`
+- `/var/log/secure`
+- `/var/log/cron`
+- `/var/log/maillog`
 
 ## Permissions
 

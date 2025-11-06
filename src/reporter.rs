@@ -3,12 +3,13 @@ use crate::config::{
     MAX_RECENT_ERRORS_DISPLAY, MEMORY_WARNING_THRESHOLD,
 };
 use crate::db::{query_logs, query_metrics, LogEntry};
-use anyhow::Result;
+use anyhow::{Context, Result};
 use chrono::{DateTime, Duration, Local, Utc};
 use rusqlite::Connection;
+use serde::Serialize;
 
 /// Report statistics for system metrics
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct MetricsReport {
     pub period_start: DateTime<Utc>,
     pub period_end: DateTime<Utc>,
@@ -24,7 +25,7 @@ pub struct MetricsReport {
 }
 
 /// Report statistics for log entries
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct LogReport {
     pub total_errors: usize,
     pub total_warnings: usize,
@@ -281,4 +282,78 @@ pub fn format_report(metrics: &MetricsReport, logs: &LogReport) -> String {
     }
 
     output
+}
+
+/// Combined report structure for export
+#[derive(Debug, Serialize)]
+pub struct FullReport {
+    pub version: String,
+    pub metrics: MetricsReport,
+    pub logs: LogReport,
+}
+
+/// Export format for reports
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ExportFormat {
+    Json,
+    Text,
+}
+
+impl ExportFormat {
+    pub fn from_str(s: &str) -> Result<Self> {
+        match s.to_lowercase().as_str() {
+            "json" => Ok(ExportFormat::Json),
+            "text" | "txt" => Ok(ExportFormat::Text),
+            _ => Err(anyhow::anyhow!("Unsupported format: {}", s)),
+        }
+    }
+}
+
+/// Export report in the specified format
+pub fn export_report(
+    metrics: &MetricsReport,
+    logs: &LogReport,
+    format: ExportFormat,
+) -> Result<String> {
+    match format {
+        ExportFormat::Json => {
+            let full_report = FullReport {
+                version: crate::VERSION.to_string(),
+                metrics: metrics.clone(),
+                logs: logs.clone(),
+            };
+            serde_json::to_string_pretty(&full_report)
+                .context("Failed to serialize report to JSON")
+        }
+        ExportFormat::Text => Ok(format_report(metrics, logs)),
+    }
+}
+
+impl Clone for MetricsReport {
+    fn clone(&self) -> Self {
+        MetricsReport {
+            period_start: self.period_start,
+            period_end: self.period_end,
+            avg_cpu_usage: self.avg_cpu_usage,
+            max_cpu_usage: self.max_cpu_usage,
+            avg_memory_used_percent: self.avg_memory_used_percent,
+            max_memory_used_percent: self.max_memory_used_percent,
+            avg_disk_used_percent: self.avg_disk_used_percent,
+            max_disk_used_percent: self.max_disk_used_percent,
+            avg_process_count: self.avg_process_count,
+            max_load_avg_1min: self.max_load_avg_1min,
+            issues: self.issues.clone(),
+        }
+    }
+}
+
+impl Clone for LogReport {
+    fn clone(&self) -> Self {
+        LogReport {
+            total_errors: self.total_errors,
+            total_warnings: self.total_warnings,
+            total_critical: self.total_critical,
+            recent_errors: self.recent_errors.clone(),
+        }
+    }
 }

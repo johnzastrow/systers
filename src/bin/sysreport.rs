@@ -2,8 +2,9 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use rusqlite::Connection;
 use std::env;
+use std::fs;
 use std::path::PathBuf;
-use systers::reporter::{format_report, generate_report};
+use systers::reporter::{export_report, generate_report, ExportFormat};
 
 /// System Analysis Report Generator
 ///
@@ -21,6 +22,14 @@ struct Args {
     /// Path to database file (overrides SYSTERS_DB_PATH env var)
     #[arg(long, value_name = "PATH")]
     db_path: Option<PathBuf>,
+
+    /// Output file path (if not specified, prints to stdout)
+    #[arg(short, long, value_name = "FILE")]
+    output: Option<PathBuf>,
+
+    /// Output format: text or json (default: text)
+    #[arg(short, long, value_name = "FORMAT", default_value = "text")]
+    format: String,
 }
 
 fn get_db_path(cli_path: Option<PathBuf>) -> PathBuf {
@@ -58,6 +67,10 @@ fn main() -> Result<()> {
         std::process::exit(1);
     }
 
+    // Parse export format
+    let export_format = ExportFormat::from_str(&args.format)
+        .context(format!("Invalid format '{}'. Supported: text, json", args.format))?;
+
     // Open database
     let conn = Connection::open(&db_path).context("Failed to open database")?;
 
@@ -65,9 +78,18 @@ fn main() -> Result<()> {
     let (metrics, logs) =
         generate_report(&conn, args.hours).context("Failed to generate report")?;
 
-    // Format and display report
-    let report = format_report(&metrics, &logs);
-    println!("{}", report);
+    // Export report in the specified format
+    let report_content = export_report(&metrics, &logs, export_format)
+        .context("Failed to export report")?;
+
+    // Write to file or stdout
+    if let Some(output_path) = args.output {
+        fs::write(&output_path, &report_content)
+            .context(format!("Failed to write report to {}", output_path.display()))?;
+        eprintln!("Report saved to: {}", output_path.display());
+    } else {
+        println!("{}", report_content);
+    }
 
     Ok(())
 }

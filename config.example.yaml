@@ -1,0 +1,106 @@
+# Systers Configuration File
+#
+# This file can be placed in one of these locations (checked in order):
+# 1. ./systers.yaml (current directory)
+# 2. ~/.config/systers/config.yaml (user config)
+# 3. /etc/systers/config.yaml (system config)
+#
+# If no config file is found, built-in defaults (shown below) will be used.
+
+# Database configuration
+database:
+  # Path to the SQLite database file
+  # Can be overridden by SYSTERS_DB_PATH env var or --db-path CLI flag
+  # Default: ~/.systers.db
+  path: ~/.systers.db
+
+# Issue detection thresholds
+thresholds:
+  # CPU usage percentage threshold for warning alerts (0.0-100.0)
+  cpu_warning: 90.0
+
+  # Memory usage percentage threshold for warning alerts (0.0-100.0)
+  memory_warning: 90.0
+
+  # Disk usage percentage threshold for warning alerts (0.0-100.0)
+  disk_warning: 85.0
+
+  # System load average threshold for warning alerts
+  load_warning: 5.0
+
+  # Minimum number of errors before triggering a "multiple errors" recommendation
+  error_count: 10
+
+# Data collection configuration
+collection:
+  # Log file paths to scan (optimized for Debian/Ubuntu systems)
+  # Can be overridden by SYSTERS_LOG_PATHS env var or --log-paths CLI flag
+  log_paths:
+    - /var/log/syslog
+    - /var/log/messages
+    - /var/log/kern.log
+    - /var/log/auth.log
+
+  # Maximum number of log lines to read from each file
+  max_log_lines_per_file: 1000
+
+  # CPU measurement delay in milliseconds
+  # The sysinfo crate needs at least one refresh cycle to compute CPU percentage
+  cpu_measurement_delay_ms: 200
+
+# Display configuration
+display:
+  # Maximum number of recent error messages to display in reports
+  max_recent_errors: 10
+
+# Data retention configuration
+retention:
+  # Number of days to retain historical data before cleanup
+  days: 30
+
+# ============================================================
+# RHEL/CentOS/Fedora Example Configuration
+# ============================================================
+# For RHEL-based systems, you may want to use these log paths instead:
+# collection:
+#   log_paths:
+#     - /var/log/messages
+#     - /var/log/secure
+#     - /var/log/cron
+#     - /var/log/maillog
+
+# ============================================================
+# Custom Application Monitoring Example
+# ============================================================
+# To monitor custom application logs:
+# collection:
+#   log_paths:
+#     - /var/log/syslog
+#     - /var/log/myapp/application.log
+#     - /opt/services/service1/logs/error.log
+#     - /home/user/projects/myproject/debug.log
+
+# ============================================================
+# High-Sensitivity Monitoring Example
+# ============================================================
+# For systems that require early warning of issues:
+# thresholds:
+#   cpu_warning: 70.0
+#   memory_warning: 75.0
+#   disk_warning: 70.0
+#   load_warning: 3.0
+#   error_count: 5
+
+# ============================================================
+# Production Server Example
+# ============================================================
+# For production servers with longer retention and stricter thresholds:
+# thresholds:
+#   cpu_warning: 85.0
+#   memory_warning: 85.0
+#   disk_warning: 80.0
+#   load_warning: 10.0
+# retention:
+#   days: 90
+# display:
+#   max_recent_errors: 20

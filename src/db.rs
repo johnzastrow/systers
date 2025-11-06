@@ -2,13 +2,14 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, TimeZone, Utc};
 use log::{info, warn};
 use rusqlite::{params, Connection};
+use serde::Serialize;
 use std::path::Path;
 
 /// Database schema version
 pub const SCHEMA_VERSION: i32 = 2;
 
 /// System metrics record
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct SystemMetrics {
     pub timestamp: DateTime<Utc>,
     pub cpu_usage: f32,
@@ -24,7 +25,7 @@ pub struct SystemMetrics {
 }
 
 /// Log entry record
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct LogEntry {
     pub timestamp: DateTime<Utc>,
     pub level: String,
