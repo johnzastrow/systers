@@ -41,7 +41,8 @@ Implemented professional CLI with `clap` crate.
 
 ## High Priority
 
-(All high-priority items have been completed - see "Completed Items" section above)
+1. Move configurations into a YAML file. Include sensible defaults for a Debian system
+2. Implement more system checks
 
 ## Medium Priority
 
