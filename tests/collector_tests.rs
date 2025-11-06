@@ -82,7 +82,7 @@ fn test_collect_log_entries_respects_limit() -> Result<()> {
     Ok(())
 }
 
-/// Test log entry source is set correctly
+/// Test log entry source is set correctly to the log file path
 #[test]
 fn test_collect_log_entries_source() -> Result<()> {
     let temp_dir = TempDir::new()?;
@@ -95,7 +95,11 @@ fn test_collect_log_entries_source() -> Result<()> {
     let entries = collect_log_entries(&log_file_path, 100)?;
 
     assert_eq!(entries.len(), 1);
-    assert_eq!(entries[0].source, "syslog");
+    // Source should now be the actual log file path
+    assert_eq!(
+        entries[0].source,
+        log_file_path.to_string_lossy().to_string()
+    );
 
     Ok(())
 }

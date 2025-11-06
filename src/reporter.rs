@@ -4,7 +4,7 @@ use crate::config::{
 };
 use crate::db::{query_logs, query_metrics, LogEntry};
 use anyhow::Result;
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Duration, Local, Utc};
 use rusqlite::Connection;
 
 /// Report statistics for system metrics
@@ -165,10 +165,14 @@ pub fn format_report(metrics: &MetricsReport, logs: &LogReport) -> String {
     ));
     output.push_str("╚════════════════════════════════════════════════════════════════╝\n\n");
 
+    // Convert to local time for display
+    let local_start: DateTime<Local> = metrics.period_start.into();
+    let local_end: DateTime<Local> = metrics.period_end.into();
+
     output.push_str(&format!(
         "Report Period: {} to {}\n\n",
-        metrics.period_start.format("%Y-%m-%d %H:%M:%S UTC"),
-        metrics.period_end.format("%Y-%m-%d %H:%M:%S UTC")
+        local_start.format("%Y-%m-%d %H:%M:%S %Z"),
+        local_end.format("%Y-%m-%d %H:%M:%S %Z")
     ));
 
     output.push_str("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
@@ -221,11 +225,14 @@ pub fn format_report(metrics: &MetricsReport, logs: &LogReport) -> String {
     if !logs.recent_errors.is_empty() {
         output.push_str("Recent Critical/Error Messages (up to 10):\n");
         for (i, entry) in logs.recent_errors.iter().enumerate() {
+            let local_time: DateTime<Local> = entry.timestamp.into();
             output.push_str(&format!(
-                "  {}. [{}] {}\n",
+                "  {}. [{}] {} ({})\n      {}\n",
                 i + 1,
                 entry.level,
-                entry.message.chars().take(80).collect::<String>()
+                local_time.format("%Y-%m-%d %H:%M:%S"),
+                entry.source,
+                entry.message.chars().take(100).collect::<String>()
             ));
         }
         output.push('\n');

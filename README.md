@@ -92,11 +92,73 @@ Run `syswriter` to collect current system metrics and scan logs:
 syswriter
 ```
 
-By default, data is stored in `~/.systers.db`. You can override this with the `SYSTERS_DB_PATH` environment variable:
+By default, data is stored in `~/.systers.db`. You can override this with the `SYSTERS_DB_PATH` environment variable or `--db-path` flag:
 
 ```bash
+# Using environment variable
 SYSTERS_DB_PATH=/var/lib/systers/data.db syswriter
+
+# Using command-line flag
+syswriter --db-path /var/lib/systers/data.db
 ```
+
+#### CLI Options
+
+```bash
+# View all options
+syswriter --help
+
+# Manual cleanup only (skip collection)
+syswriter --cleanup
+
+# Disable automatic cleanup after collection
+syswriter --no-cleanup
+
+# Custom retention period (default: 30 days)
+syswriter --retention-days 60
+
+# Check version
+syswriter --version
+```
+
+#### Logging Configuration
+
+Systers uses structured logging that can be configured via the `RUST_LOG` environment variable:
+
+```bash
+# Default: INFO level (shows collection progress)
+syswriter
+
+# Debug mode (shows detailed metrics)
+RUST_LOG=debug syswriter
+
+# Quiet mode (errors only)
+RUST_LOG=error syswriter
+
+# Specific module logging
+RUST_LOG=systers::collector=debug syswriter
+```
+
+#### Custom Log Paths
+
+You can specify custom log files to scan:
+
+```bash
+# Using command-line flag (comma-separated)
+syswriter --log-paths /var/log/syslog,/var/log/myapp.log,/custom/path/app.log
+
+# Using environment variable (colon-separated)
+SYSTERS_LOG_PATHS=/var/log/syslog:/custom/app.log syswriter
+
+# Combine with other options
+syswriter --log-paths /var/log/myapp.log --retention-days 60
+```
+
+If no custom paths are specified, systers scans the default Linux log locations:
+- `/var/log/syslog`
+- `/var/log/messages`
+- `/var/log/kern.log`
+- `/var/log/auth.log`
 
 #### Running on a Schedule
 
@@ -155,8 +217,14 @@ sysreport --hours 48
 # View last week
 sysreport --hours 168
 
+# Use custom database location
+sysreport --db-path /var/lib/systers/data.db
+
 # Show help
 sysreport --help
+
+# Check version
+sysreport --version
 ```
 
 The report includes:

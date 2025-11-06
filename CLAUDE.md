@@ -83,11 +83,14 @@ SYSTERS_DB_PATH=/tmp/test.db cargo run --bin syswriter
 ### Database Schema
 
 The SQLite database contains three tables:
-- **schema_version** - Tracks schema version (current: 1)
+- **schema_version** - Tracks schema version (current: 1) and application version
 - **system_metrics** - Stores timestamped metrics (CPU, memory, disk, load, process count)
 - **log_entries** - Stores notable log entries (ERROR, WARNING, CRITICAL levels only)
 
 Indices exist on `timestamp` fields and `log_entries.level` for query performance.
+
+**Schema Migrations:** The `init_database()` function automatically detects and migrates old database schemas. Currently handles:
+- Adding `app_version` column to `schema_version` table (migration from v0.1.0 initial release)
 
 ### Key Types
 

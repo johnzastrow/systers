@@ -2,183 +2,48 @@
 
 This document tracks proposed improvements and enhancements for the Systers project.
 
-## Critical Issues
 
-### 1. Fix unsafe `.unwrap()` calls in database queries
-**Location:** `src/db.rs:164`, `src/db.rs:204`
+## Completed Items
 
-**Issue:** Timestamp parsing uses `.unwrap()` which will panic if the database contains invalid data.
+### ✅ 1. Fix unsafe `.unwrap()` calls in database queries
+**Status:** Completed in v0.2.0
+Fixed timestamp parsing to use proper error handling instead of `.unwrap()`.
 
-**Fix:**
-```rust
-let timestamp = DateTime::parse_from_rfc3339(&timestamp_str)
-    .context("Invalid timestamp in database")?
-    .with_timezone(&Utc);
-```
+### ✅ 2. Implement data retention policy
+**Status:** Completed in v0.2.0
+Added `cleanup_old_data()` function with configurable retention period.
 
-**Impact:** Prevents crashes when reading corrupted database entries.
+### ✅ 3. Replace magic numbers with named constants
+**Status:** Completed in v0.2.0
+Created `src/config.rs` with all configuration constants.
 
----
+### ✅ 4. Improve log parsing accuracy
+**Status:** Completed in v0.3.0 (unreleased)
+Implemented regex-based pattern matching with timestamp extraction and false positive reduction.
 
-### 2. Implement data retention policy
-**Location:** New functionality needed across database and syswriter
+### ✅ 5. Add test coverage
+**Status:** Completed in v0.2.0
+Added 22 comprehensive tests across all modules.
 
-**Issue:** Database will grow indefinitely without cleanup mechanism.
+### ✅ 6. Eliminate database query code duplication
+**Status:** Completed in v0.3.0 (unreleased)
+Consolidated `query_logs()` function to eliminate duplicated code.
 
-**Proposed Solution:**
-- Add a cleanup function to remove data older than X days (configurable)
-- Add `--cleanup` or `--max-days` flag to syswriter
-- Optionally run automatic cleanup during data collection
-- Add configuration for retention period (default: 30 days?)
+### ✅ 7. Add structured logging
+**Status:** Completed in v0.3.0 (unreleased)
+Replaced print statements with `log` crate, configurable via `RUST_LOG`.
 
-**Impact:** Prevents unbounded disk usage growth.
+### ✅ 8. Improve command-line argument parsing
+**Status:** Completed in v0.2.0
+Implemented professional CLI with `clap` crate.
 
 ---
 
 ## High Priority
 
-### 3. Replace magic numbers with named constants
-**Location:** Throughout codebase (reporter.rs, collector.rs)
-
-**Issue:** Hardcoded thresholds (90%, 85%), limits (1000, 10), and timing (200ms) make configuration difficult.
-
-**Proposed Solution:**
-Create `src/config.rs`:
-```rust
-pub const CPU_WARNING_THRESHOLD: f32 = 90.0;
-pub const MEMORY_WARNING_THRESHOLD: f32 = 90.0;
-pub const DISK_WARNING_THRESHOLD: f32 = 85.0;
-pub const LOAD_WARNING_THRESHOLD: f64 = 5.0;
-pub const MAX_LOG_LINES_PER_FILE: usize = 1000;
-pub const MAX_RECENT_ERRORS_DISPLAY: usize = 10;
-pub const CPU_MEASUREMENT_DELAY_MS: u64 = 200;
-```
-
-Later, these could be loaded from a configuration file.
-
----
-
-### 4. Improve log parsing accuracy
-**Location:** `src/collector.rs:71-81`
-
-**Issues:**
-- Simple `.contains()` matching generates false positives (e.g., "error" in URLs)
-- Doesn't handle structured logs (JSON, systemd journal)
-- Uses collection timestamp instead of actual log entry timestamp
-- Misses log format variations
-
-**Proposed Solutions:**
-- Use regex patterns for better matching
-- Add systemd journal integration (`journalctl` support)
-- Parse log timestamps from entries
-- Make log patterns configurable
-- Add support for common log formats (syslog, Apache, nginx)
-
----
-
-### 5. Add test coverage
-**Location:** New `tests/` directory
-
-**Current State:** No tests exist
-
-**Proposed Tests:**
-- Unit tests for percentage calculations in `reporter.rs`
-- Unit tests for metric collection with mocked sysinfo
-- Integration tests with in-memory SQLite database (`:memory:`)
-- Tests for log parsing edge cases (empty lines, malformed entries)
-- Tests for database query functions
-- End-to-end tests for both binaries
-
-**Priority Items:**
-- Database operations (CRUD, queries)
-- Report generation and formatting
-- Log parsing patterns
-
----
-
-### 6. Eliminate database query code duplication
-**Location:** `src/db.rs:192-249`
-
-**Issue:** The `query_logs` function duplicates nearly identical code for filtered vs unfiltered queries.
-
-**Fix:** Consolidate query logic:
-```rust
-pub fn query_logs(
-    conn: &Connection,
-    start: DateTime<Utc>,
-    end: DateTime<Utc>,
-    level_filter: Option<&str>,
-) -> Result<Vec<LogEntry>> {
-    let (query, params): (&str, Vec<Box<dyn rusqlite::ToSql>>) = if let Some(level) = level_filter {
-        (
-            "SELECT timestamp, level, source, message
-             FROM log_entries
-             WHERE timestamp >= ?1 AND timestamp <= ?2 AND level = ?3
-             ORDER BY timestamp DESC",
-            vec![Box::new(start.to_rfc3339()), Box::new(end.to_rfc3339()), Box::new(level.to_string())]
-        )
-    } else {
-        (
-            "SELECT timestamp, level, source, message
-             FROM log_entries
-             WHERE timestamp >= ?1 AND timestamp <= ?2
-             ORDER BY timestamp DESC",
-            vec![Box::new(start.to_rfc3339()), Box::new(end.to_rfc3339())]
-        )
-    };
-    // ... rest of implementation
-}
-```
-
----
+(All high-priority items have been completed - see "Completed Items" section above)
 
 ## Medium Priority
-
-### 7. Add structured logging
-**Location:** Replace all `println!` and `eprintln!` calls
-
-**Issue:** Current logging uses print statements with no level control or filtering.
-
-**Proposed Solution:**
-- Add `log` crate dependency
-- Add `env_logger` for runtime configuration
-- Replace print statements with `info!()`, `warn!()`, `error!()`, `debug!()`
-- Allow users to control verbosity with `RUST_LOG` environment variable
-
----
-
-### 8. Improve command-line argument parsing
-**Location:** `src/bin/sysreport.rs:39-62`, potentially `src/bin/syswriter.rs`
-
-**Issue:** Manual argument parsing is error-prone and provides poor UX.
-
-**Proposed Solution:**
-Add `clap` crate for:
-- Automatic help generation
-- Type validation
-- Better error messages
-- Subcommands support (e.g., `sysreport show`, `sysreport export`, `sysreport clean`)
-- Shell completion generation
-
-Example:
-```rust
-use clap::Parser;
-
-#[derive(Parser)]
-#[command(name = "sysreport")]
-#[command(about = "System Analysis Report Generator")]
-struct Args {
-    /// Number of hours to look back
-    #[arg(long, default_value_t = 24)]
-    hours: i64,
-
-    /// Output format (text, json, html)
-    #[arg(long, default_value = "text")]
-    format: String,
-}
-```
-
----
 
 ### 9. Make log file paths configurable
 **Location:** `src/collector.rs:101-106`
@@ -333,12 +198,6 @@ Items from REQUIREMENTS.md not yet implemented:
 - [ ] Real-time alerting capabilities
 - [ ] Container and Kubernetes monitoring
 - [ ] Cloud platform integration (AWS, Azure, GCP)
-
----
-
-## Completed Items
-
-(This section will track completed improvements)
 
 ---
 

@@ -1,10 +1,11 @@
 use anyhow::{Context, Result};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, TimeZone, Utc};
+use log::{info, warn};
 use rusqlite::{params, Connection};
 use std::path::Path;
 
 /// Database schema version
-pub const SCHEMA_VERSION: i32 = 1;
+pub const SCHEMA_VERSION: i32 = 2;
 
 /// System metrics record
 #[derive(Debug, Clone)]
@@ -31,12 +32,149 @@ pub struct LogEntry {
     pub message: String,
 }
 
+/// Get current schema version from database
+fn get_schema_version(conn: &Connection) -> Result<i32> {
+    // Check if schema_version table exists
+    let table_exists: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='schema_version'",
+            [],
+            |row| {
+                let count: i32 = row.get(0)?;
+                Ok(count > 0)
+            },
+        )?;
+
+    if !table_exists {
+        return Ok(0); // Fresh database
+    }
+
+    // Try to get version
+    match conn.query_row("SELECT version FROM schema_version", [], |row| row.get(0)) {
+        Ok(version) => Ok(version),
+        Err(_) => Ok(0),
+    }
+}
+
+/// Migrate from schema v1 to v2 (TEXT timestamps to INTEGER timestamps)
+fn migrate_v1_to_v2(conn: &Connection) -> Result<()> {
+    info!("Migrating database from schema v1 to v2...");
+
+    // Create new tables with INTEGER timestamps
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS system_metrics_v2 (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp INTEGER NOT NULL,
+            cpu_usage REAL NOT NULL,
+            memory_total INTEGER NOT NULL,
+            memory_used INTEGER NOT NULL,
+            memory_available INTEGER NOT NULL,
+            disk_total INTEGER NOT NULL,
+            disk_used INTEGER NOT NULL,
+            process_count INTEGER NOT NULL,
+            load_avg_1min REAL NOT NULL,
+            load_avg_5min REAL NOT NULL,
+            load_avg_15min REAL NOT NULL
+        )",
+        [],
+    )?;
+
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS log_entries_v2 (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp INTEGER NOT NULL,
+            level TEXT NOT NULL,
+            source TEXT NOT NULL,
+            message TEXT NOT NULL
+        )",
+        [],
+    )?;
+
+    // Migrate system_metrics data
+    // SQLite can't parse RFC3339 directly, so we need to convert via Rust
+    let mut stmt = conn.prepare("SELECT * FROM system_metrics")?;
+    let metrics_iter = stmt.query_map([], |row| {
+        let timestamp_str: String = row.get(1)?;
+        Ok((
+            row.get::<_, i32>(0)?, // id
+            timestamp_str,
+            row.get::<_, f32>(2)?,  // cpu_usage
+            row.get::<_, i64>(3)?,  // memory_total
+            row.get::<_, i64>(4)?,  // memory_used
+            row.get::<_, i64>(5)?,  // memory_available
+            row.get::<_, i64>(6)?,  // disk_total
+            row.get::<_, i64>(7)?,  // disk_used
+            row.get::<_, i32>(8)?,  // process_count
+            row.get::<_, f64>(9)?,  // load_avg_1min
+            row.get::<_, f64>(10)?, // load_avg_5min
+            row.get::<_, f64>(11)?, // load_avg_15min
+        ))
+    })?;
+
+    for row in metrics_iter {
+        let (id, ts_str, cpu, mem_tot, mem_used, mem_avail, disk_tot, disk_used, proc_cnt, load1, load5, load15) = row?;
+
+        // Parse RFC3339 timestamp and convert to Unix timestamp
+        let timestamp = if let Ok(dt) = DateTime::parse_from_rfc3339(&ts_str) {
+            dt.timestamp()
+        } else {
+            warn!("Could not parse timestamp '{}', using current time", ts_str);
+            Utc::now().timestamp()
+        };
+
+        conn.execute(
+            "INSERT INTO system_metrics_v2 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            params![id, timestamp, cpu, mem_tot, mem_used, mem_avail, disk_tot, disk_used, proc_cnt, load1, load5, load15],
+        )?;
+    }
+
+    // Migrate log_entries data
+    let mut stmt = conn.prepare("SELECT * FROM log_entries")?;
+    let logs_iter = stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, i32>(0)?,     // id
+            row.get::<_, String>(1)?,  // timestamp
+            row.get::<_, String>(2)?,  // level
+            row.get::<_, String>(3)?,  // source
+            row.get::<_, String>(4)?,  // message
+        ))
+    })?;
+
+    for row in logs_iter {
+        let (id, ts_str, level, source, message) = row?;
+
+        // Parse RFC3339 timestamp and convert to Unix timestamp
+        let timestamp = if let Ok(dt) = DateTime::parse_from_rfc3339(&ts_str) {
+            dt.timestamp()
+        } else {
+            warn!("Could not parse log timestamp '{}', using current time", ts_str);
+            Utc::now().timestamp()
+        };
+
+        conn.execute(
+            "INSERT INTO log_entries_v2 VALUES (?, ?, ?, ?, ?)",
+            params![id, timestamp, level, source, message],
+        )?;
+    }
+
+    // Drop old tables
+    conn.execute("DROP TABLE system_metrics", [])?;
+    conn.execute("DROP TABLE log_entries", [])?;
+
+    // Rename new tables
+    conn.execute("ALTER TABLE system_metrics_v2 RENAME TO system_metrics", [])?;
+    conn.execute("ALTER TABLE log_entries_v2 RENAME TO log_entries", [])?;
+
+    info!("Migration to schema v2 complete");
+    Ok(())
+}
+
 /// Initialize the database with required schema
 pub fn init_database<P: AsRef<Path>>(db_path: P) -> Result<Connection> {
     let path_ref = db_path.as_ref();
     let conn = Connection::open(path_ref).context("Failed to open database")?;
 
-    // Create schema
+    // Create schema_version table if it doesn't exist
     conn.execute(
         "CREATE TABLE IF NOT EXISTS schema_version (
             version INTEGER PRIMARY KEY,
@@ -45,10 +183,28 @@ pub fn init_database<P: AsRef<Path>>(db_path: P) -> Result<Connection> {
         [],
     )?;
 
+    // Get current schema version
+    let current_version = get_schema_version(&conn)?;
+
+    // Perform migrations if needed
+    if current_version == 0 {
+        // Fresh database - create v2 schema directly
+        info!("Creating fresh database with schema v2");
+    } else if current_version == 1 {
+        // Migrate from v1 to v2
+        migrate_v1_to_v2(&conn)?;
+    } else if current_version > SCHEMA_VERSION {
+        warn!(
+            "Database schema version ({}) is newer than application version ({})",
+            current_version, SCHEMA_VERSION
+        );
+    }
+
+    // Create or recreate tables with v2 schema (INTEGER timestamps)
     conn.execute(
         "CREATE TABLE IF NOT EXISTS system_metrics (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            timestamp TEXT NOT NULL,
+            timestamp INTEGER NOT NULL,
             cpu_usage REAL NOT NULL,
             memory_total INTEGER NOT NULL,
             memory_used INTEGER NOT NULL,
@@ -66,7 +222,7 @@ pub fn init_database<P: AsRef<Path>>(db_path: P) -> Result<Connection> {
     conn.execute(
         "CREATE TABLE IF NOT EXISTS log_entries (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            timestamp TEXT NOT NULL,
+            timestamp INTEGER NOT NULL,
             level TEXT NOT NULL,
             source TEXT NOT NULL,
             message TEXT NOT NULL
@@ -76,19 +232,19 @@ pub fn init_database<P: AsRef<Path>>(db_path: P) -> Result<Connection> {
 
     // Create indices for better query performance
     conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_metrics_timestamp 
+        "CREATE INDEX IF NOT EXISTS idx_metrics_timestamp
          ON system_metrics(timestamp)",
         [],
     )?;
 
     conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_logs_timestamp 
+        "CREATE INDEX IF NOT EXISTS idx_logs_timestamp
          ON log_entries(timestamp)",
         [],
     )?;
 
     conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_logs_level 
+        "CREATE INDEX IF NOT EXISTS idx_logs_level
          ON log_entries(level)",
         [],
     )?;
@@ -119,11 +275,11 @@ pub fn insert_metrics(conn: &Connection, metrics: &SystemMetrics) -> Result<()> 
     conn.execute(
         "INSERT INTO system_metrics (
             timestamp, cpu_usage, memory_total, memory_used, memory_available,
-            disk_total, disk_used, process_count, 
+            disk_total, disk_used, process_count,
             load_avg_1min, load_avg_5min, load_avg_15min
         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
         params![
-            metrics.timestamp.to_rfc3339(),
+            metrics.timestamp.timestamp(), // Unix timestamp in seconds
             metrics.cpu_usage,
             metrics.memory_total,
             metrics.memory_used,
@@ -142,10 +298,10 @@ pub fn insert_metrics(conn: &Connection, metrics: &SystemMetrics) -> Result<()> 
 /// Insert log entry into database
 pub fn insert_log_entry(conn: &Connection, entry: &LogEntry) -> Result<()> {
     conn.execute(
-        "INSERT INTO log_entries (timestamp, level, source, message) 
+        "INSERT INTO log_entries (timestamp, level, source, message)
          VALUES (?1, ?2, ?3, ?4)",
         params![
-            entry.timestamp.to_rfc3339(),
+            entry.timestamp.timestamp(), // Unix timestamp in seconds
             entry.level,
             entry.source,
             entry.message,
@@ -164,22 +320,22 @@ pub fn query_metrics(
         "SELECT timestamp, cpu_usage, memory_total, memory_used, memory_available,
                 disk_total, disk_used, process_count,
                 load_avg_1min, load_avg_5min, load_avg_15min
-         FROM system_metrics 
+         FROM system_metrics
          WHERE timestamp >= ?1 AND timestamp <= ?2
          ORDER BY timestamp DESC",
     )?;
 
-    let metrics_iter = stmt.query_map(params![start.to_rfc3339(), end.to_rfc3339()], |row| {
-        let timestamp_str: String = row.get(0)?;
-        let timestamp = DateTime::parse_from_rfc3339(&timestamp_str)
-            .map_err(|e| {
+    let metrics_iter = stmt.query_map(params![start.timestamp(), end.timestamp()], |row| {
+        let timestamp_i64: i64 = row.get(0)?;
+        let timestamp = Utc.timestamp_opt(timestamp_i64, 0)
+            .single()
+            .ok_or_else(|| {
                 rusqlite::Error::FromSqlConversionFailure(
                     0,
-                    rusqlite::types::Type::Text,
-                    Box::new(e),
+                    rusqlite::types::Type::Integer,
+                    Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid timestamp")),
                 )
-            })?
-            .with_timezone(&Utc);
+            })?;
 
         Ok(SystemMetrics {
             timestamp,
@@ -211,19 +367,17 @@ pub fn query_logs(
     end: DateTime<Utc>,
     level_filter: Option<&str>,
 ) -> Result<Vec<LogEntry>> {
-    let mut results = Vec::new();
-
     let parse_row = |row: &rusqlite::Row| -> rusqlite::Result<LogEntry> {
-        let timestamp_str: String = row.get(0)?;
-        let timestamp = DateTime::parse_from_rfc3339(&timestamp_str)
-            .map_err(|e| {
+        let timestamp_i64: i64 = row.get(0)?;
+        let timestamp = Utc.timestamp_opt(timestamp_i64, 0)
+            .single()
+            .ok_or_else(|| {
                 rusqlite::Error::FromSqlConversionFailure(
                     0,
-                    rusqlite::types::Type::Text,
-                    Box::new(e),
+                    rusqlite::types::Type::Integer,
+                    Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid timestamp")),
                 )
-            })?
-            .with_timezone(&Utc);
+            })?;
 
         Ok(LogEntry {
             timestamp,
@@ -233,35 +387,32 @@ pub fn query_logs(
         })
     };
 
-    if let Some(level) = level_filter {
-        let mut stmt = conn.prepare(
+    // Build query and parameters based on filter
+    let start_ts = start.timestamp();
+    let end_ts = end.timestamp();
+
+    let mut stmt;
+    let logs_iter = if let Some(level) = level_filter {
+        stmt = conn.prepare(
             "SELECT timestamp, level, source, message
-             FROM log_entries 
+             FROM log_entries
              WHERE timestamp >= ?1 AND timestamp <= ?2 AND level = ?3
              ORDER BY timestamp DESC",
         )?;
-
-        let logs_iter = stmt.query_map(
-            params![start.to_rfc3339(), end.to_rfc3339(), level],
-            parse_row,
-        )?;
-
-        for log in logs_iter {
-            results.push(log?);
-        }
+        stmt.query_map(params![start_ts, end_ts, level], parse_row)?
     } else {
-        let mut stmt = conn.prepare(
+        stmt = conn.prepare(
             "SELECT timestamp, level, source, message
-             FROM log_entries 
+             FROM log_entries
              WHERE timestamp >= ?1 AND timestamp <= ?2
              ORDER BY timestamp DESC",
         )?;
+        stmt.query_map(params![start_ts, end_ts], parse_row)?
+    };
 
-        let logs_iter = stmt.query_map(params![start.to_rfc3339(), end.to_rfc3339()], parse_row)?;
-
-        for log in logs_iter {
-            results.push(log?);
-        }
+    let mut results = Vec::new();
+    for log in logs_iter {
+        results.push(log?);
     }
 
     Ok(results)
@@ -271,18 +422,18 @@ pub fn query_logs(
 /// Returns tuple of (metrics_deleted, logs_deleted)
 pub fn cleanup_old_data(conn: &Connection, retention_days: i64) -> Result<(usize, usize)> {
     let cutoff_date = chrono::Utc::now() - chrono::Duration::days(retention_days);
-    let cutoff_str = cutoff_date.to_rfc3339();
+    let cutoff_ts = cutoff_date.timestamp();
 
     // Delete old metrics
     let metrics_deleted = conn.execute(
         "DELETE FROM system_metrics WHERE timestamp < ?1",
-        params![cutoff_str],
+        params![cutoff_ts],
     )?;
 
     // Delete old log entries
     let logs_deleted = conn.execute(
         "DELETE FROM log_entries WHERE timestamp < ?1",
-        params![cutoff_str],
+        params![cutoff_ts],
     )?;
 
     // Vacuum to reclaim space

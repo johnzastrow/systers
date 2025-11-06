@@ -23,7 +23,7 @@ fn test_init_database() -> Result<()> {
     // Verify schema version is set
     let version: i32 =
         conn.query_row("SELECT version FROM schema_version", [], |row| row.get(0))?;
-    assert_eq!(version, 1);
+    assert_eq!(version, 2);
 
     // Verify app version is set
     let app_version: String =
@@ -258,3 +258,5 @@ fn test_cleanup_old_data() -> Result<()> {
 
     Ok(())
 }
+
+//}
