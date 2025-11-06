@@ -8,12 +8,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Project documentation improvements (CLAUDE.md, AI_INSTRUCTIONS.md)
+- Project documentation improvements (CLAUDE.md, AI_INSTRUCTIONS.md, SECURITY_EVALUATION.md)
 - TODO.md for tracking proposed improvements
 - This CHANGELOG.md file
+- Configuration module (`src/config.rs`) with constants for all thresholds and limits
+- Automatic data retention/cleanup functionality
+- `cleanup_old_data()` function to delete data older than retention period
+- `--cleanup` flag to syswriter for manual cleanup
+- `--no-cleanup` flag to syswriter to disable automatic cleanup
+- Database file permission enforcement (Unix: 0600 - owner read/write only)
+- Comprehensive test suite (21 tests across db, collector, and reporter)
+- Mermaid diagrams in README (architecture, data flow, database schema)
 
 ### Changed
 - Reorganized documentation into `docs/` directory
+- Replaced all magic numbers with named constants from `config` module
+- Fixed unsafe `.unwrap()` calls in database query functions (CRITICAL security fix)
+- Database schema now includes `app_version` field in `schema_version` table
+- Version number now displayed in all binaries and reports
+- Automatic cleanup runs after each syswriter execution (30-day retention by default)
+- Improved error handling in timestamp parsing (no longer panics on malformed data)
+
+### Fixed
+- Database queries no longer panic on malformed timestamp data
+- Database file created with restrictive permissions to protect collected data
+
+### Security
+- Implemented proper error handling to prevent crashes from corrupted database data
+- Database files now created with 0600 permissions (Unix) to prevent unauthorized access
+- Added comprehensive security evaluation document
 
 ## [0.1.0] - 2025-11-05
 

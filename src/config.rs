@@ -1,10 +1,5 @@
-/// Configuration constants for Systers
-///
-/// This module contains all configurable thresholds and limits used throughout
-/// the application. These values control issue detection, data collection,
-/// and system behavior.
-
 // Issue Detection Thresholds
+
 /// CPU usage percentage threshold for warning alerts
 pub const CPU_WARNING_THRESHOLD: f32 = 90.0;
 

@@ -2,7 +2,8 @@ use anyhow::{Context, Result};
 use std::env;
 use std::path::PathBuf;
 use systers::collector::{collect_system_metrics, scan_system_logs};
-use systers::db::{init_database, insert_log_entry, insert_metrics};
+use systers::config::DEFAULT_RETENTION_DAYS;
+use systers::db::{cleanup_old_data, init_database, insert_log_entry, insert_metrics};
 
 fn get_db_path() -> PathBuf {
     env::var("SYSTERS_DB_PATH")
@@ -15,6 +16,10 @@ fn get_db_path() -> PathBuf {
 }
 
 fn main() -> Result<()> {
+    let args: Vec<String> = env::args().collect();
+    let cleanup_only = args.contains(&"--cleanup".to_string());
+    let auto_cleanup = !args.contains(&"--no-cleanup".to_string());
+
     let db_path = get_db_path();
 
     println!(
@@ -22,10 +27,26 @@ fn main() -> Result<()> {
         systers::VERSION
     );
     println!("Database: {}", db_path.display());
-    println!("Collecting system metrics...");
 
     // Initialize database
     let conn = init_database(&db_path).context("Failed to initialize database")?;
+
+    // If cleanup-only mode, run cleanup and exit
+    if cleanup_only {
+        println!(
+            "\nCleaning up old data (retention: {} days)...",
+            DEFAULT_RETENTION_DAYS
+        );
+        let (metrics_deleted, logs_deleted) = cleanup_old_data(&conn, DEFAULT_RETENTION_DAYS)
+            .context("Failed to cleanup old data")?;
+        println!(
+            "✓ Deleted {} metrics and {} log entries",
+            metrics_deleted, logs_deleted
+        );
+        return Ok(());
+    }
+
+    println!("Collecting system metrics...");
 
     // Collect system metrics
     let metrics = collect_system_metrics().context("Failed to collect system metrics")?;
@@ -72,7 +93,29 @@ fn main() -> Result<()> {
     }
 
     println!("\n✓ Data collection complete at {}", metrics.timestamp);
-    println!("  Use 'sysreport' to view analysis");
+
+    // Automatic cleanup of old data
+    if auto_cleanup {
+        println!(
+            "\nCleaning up old data (retention: {} days)...",
+            DEFAULT_RETENTION_DAYS
+        );
+        match cleanup_old_data(&conn, DEFAULT_RETENTION_DAYS) {
+            Ok((metrics_deleted, logs_deleted)) => {
+                if metrics_deleted > 0 || logs_deleted > 0 {
+                    println!(
+                        "  Deleted {} metrics and {} log entries",
+                        metrics_deleted, logs_deleted
+                    );
+                }
+            }
+            Err(e) => {
+                eprintln!("  Warning: Cleanup failed: {}", e);
+            }
+        }
+    }
+
+    println!("\n  Use 'sysreport' to view analysis");
 
     Ok(())
 }

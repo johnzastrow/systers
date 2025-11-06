@@ -172,11 +172,13 @@ pub fn query_metrics(
     let metrics_iter = stmt.query_map(params![start.to_rfc3339(), end.to_rfc3339()], |row| {
         let timestamp_str: String = row.get(0)?;
         let timestamp = DateTime::parse_from_rfc3339(&timestamp_str)
-            .map_err(|e| rusqlite::Error::FromSqlConversionFailure(
-                0,
-                rusqlite::types::Type::Text,
-                Box::new(e),
-            ))?
+            .map_err(|e| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    0,
+                    rusqlite::types::Type::Text,
+                    Box::new(e),
+                )
+            })?
             .with_timezone(&Utc);
 
         Ok(SystemMetrics {
@@ -214,11 +216,13 @@ pub fn query_logs(
     let parse_row = |row: &rusqlite::Row| -> rusqlite::Result<LogEntry> {
         let timestamp_str: String = row.get(0)?;
         let timestamp = DateTime::parse_from_rfc3339(&timestamp_str)
-            .map_err(|e| rusqlite::Error::FromSqlConversionFailure(
-                0,
-                rusqlite::types::Type::Text,
-                Box::new(e),
-            ))?
+            .map_err(|e| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    0,
+                    rusqlite::types::Type::Text,
+                    Box::new(e),
+                )
+            })?
             .with_timezone(&Utc);
 
         Ok(LogEntry {
@@ -261,4 +265,28 @@ pub fn query_logs(
     }
 
     Ok(results)
+}
+
+/// Delete old data beyond the retention period
+/// Returns tuple of (metrics_deleted, logs_deleted)
+pub fn cleanup_old_data(conn: &Connection, retention_days: i64) -> Result<(usize, usize)> {
+    let cutoff_date = chrono::Utc::now() - chrono::Duration::days(retention_days);
+    let cutoff_str = cutoff_date.to_rfc3339();
+
+    // Delete old metrics
+    let metrics_deleted = conn.execute(
+        "DELETE FROM system_metrics WHERE timestamp < ?1",
+        params![cutoff_str],
+    )?;
+
+    // Delete old log entries
+    let logs_deleted = conn.execute(
+        "DELETE FROM log_entries WHERE timestamp < ?1",
+        params![cutoff_str],
+    )?;
+
+    // Vacuum to reclaim space
+    conn.execute("VACUUM", [])?;
+
+    Ok((metrics_deleted, logs_deleted))
 }
