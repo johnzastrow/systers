@@ -43,6 +43,19 @@ Implemented professional CLI with `clap` crate.
 
 1. Move configurations into a YAML file. Include sensible defaults for a Debian system
 2. Implement more system checks
+   a. Directories with the most changes over time (growing or shrinking in size. 3 levels deep from / )
+   b. Mail messages
+   c. processes that use the most network upload / download / chattiness
+   d. processes with the most disk i/o
+   e. packages that need updating
+   f. smart disk health
+   g. systemd logs
+   h. hardware info
+   i. get ideas from the /proc directory
+   
+   
+   
+4. 
 
 ## Medium Priority
 
