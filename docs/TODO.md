@@ -37,6 +37,10 @@ Replaced print statements with `log` crate, configurable via `RUST_LOG`.
 **Status:** Completed in v0.2.0
 Implemented professional CLI with `clap` crate.
 
+### ✅ 9. Make log file paths configurable
+**Status:** Completed in v0.3.0 (unreleased)
+Implemented custom log path support via `--log-paths` CLI flag and `SYSTERS_LOG_PATHS` environment variable. Added comprehensive tests for the feature.
+
 ---
 
 ## High Priority
@@ -44,20 +48,6 @@ Implemented professional CLI with `clap` crate.
 (All high-priority items have been completed - see "Completed Items" section above)
 
 ## Medium Priority
-
-### 9. Make log file paths configurable
-**Location:** `src/collector.rs:101-106`
-
-**Issue:** Hardcoded log paths don't work for all systems or use cases.
-
-**Proposed Solutions:**
-- Environment variable: `SYSTERS_LOG_PATHS` (colon-separated)
-- Configuration file support
-- Command-line argument to syswriter
-- Support for custom application logs
-- Distribution-specific defaults (RHEL vs Debian)
-
----
 
 ### 10. Add report export functionality
 **Location:** New feature in `src/reporter.rs` and `src/bin/sysreport.rs`

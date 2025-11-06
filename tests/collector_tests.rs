@@ -159,3 +159,78 @@ fn test_collect_system_metrics() -> Result<()> {
 
     Ok(())
 }
+
+/// Test scan_system_logs_with_paths with custom log paths
+#[test]
+fn test_scan_system_logs_with_custom_paths() -> Result<()> {
+    let temp_dir = TempDir::new()?;
+
+    // Create multiple test log files
+    let log1_path = temp_dir.path().join("app1.log");
+    let log2_path = temp_dir.path().join("app2.log");
+    let log3_path = temp_dir.path().join("app3.log");
+
+    let mut log1 = File::create(&log1_path)?;
+    writeln!(log1, "ERROR: Database connection failed")?;
+    writeln!(log1, "Normal log line")?;
+    log1.sync_all()?;
+
+    let mut log2 = File::create(&log2_path)?;
+    writeln!(log2, "WARNING: Low memory")?;
+    writeln!(log2, "CRITICAL: System panic")?;
+    log2.sync_all()?;
+
+    let mut log3 = File::create(&log3_path)?;
+    writeln!(log3, "Normal operations")?;
+    log3.sync_all()?;
+
+    // Test with custom paths
+    let custom_paths = vec![log1_path.clone(), log2_path.clone(), log3_path.clone()];
+    let entries = systers::collector::scan_system_logs_with_paths(Some(&custom_paths))?;
+
+    // Should find 3 entries: 1 ERROR, 1 WARNING, 1 CRITICAL
+    assert_eq!(entries.len(), 3);
+
+    // Verify we have all expected levels
+    let error_count = entries.iter().filter(|e| e.level == "ERROR").count();
+    let warning_count = entries.iter().filter(|e| e.level == "WARNING").count();
+    let critical_count = entries.iter().filter(|e| e.level == "CRITICAL").count();
+
+    assert_eq!(error_count, 1);
+    assert_eq!(warning_count, 1);
+    assert_eq!(critical_count, 1);
+
+    // Verify sources are set correctly
+    let has_log1_source = entries.iter().any(|e| e.source == log1_path.to_string_lossy().to_string());
+    let has_log2_source = entries.iter().any(|e| e.source == log2_path.to_string_lossy().to_string());
+
+    assert!(has_log1_source);
+    assert!(has_log2_source);
+
+    Ok(())
+}
+
+/// Test scan_system_logs_with_paths with None (default paths)
+#[test]
+fn test_scan_system_logs_with_default_paths() -> Result<()> {
+    // This should use default system log paths
+    // It may fail if system logs are not readable, which is expected
+    let result = systers::collector::scan_system_logs_with_paths::<&str>(None);
+
+    // Should not panic, but may return Ok with empty vec or an error
+    assert!(result.is_ok());
+
+    Ok(())
+}
+
+/// Test scan_system_logs_with_paths with non-existent paths
+#[test]
+fn test_scan_system_logs_with_nonexistent_paths() -> Result<()> {
+    let nonexistent_paths = vec!["/tmp/nonexistent_log_file_12345.log"];
+    let entries = systers::collector::scan_system_logs_with_paths(Some(&nonexistent_paths))?;
+
+    // Should return empty vector for non-existent files
+    assert_eq!(entries.len(), 0);
+
+    Ok(())
+}
