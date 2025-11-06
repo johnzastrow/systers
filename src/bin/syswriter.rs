@@ -1,11 +1,15 @@
 use anyhow::{Context, Result};
+use chrono::Utc;
 use clap::Parser;
 use log::{debug, info, warn};
 use std::env;
 use std::path::PathBuf;
 use systers::collector::{collect_system_metrics, scan_system_logs_with_paths};
 use systers::config::DEFAULT_RETENTION_DAYS;
-use systers::db::{cleanup_old_data, init_database, insert_log_entry, insert_metrics};
+use systers::db::{
+    cleanup_old_data, init_database, insert_log_entry, insert_metrics, insert_system_check,
+    SystemCheckResult,
+};
 
 /// System Data Collector
 ///
@@ -165,11 +169,11 @@ fn main() -> Result<()> {
             "Cleaning up old data (retention: {} days)...",
             retention_days
         );
-        let (metrics_deleted, logs_deleted) =
+        let (metrics_deleted, logs_deleted, checks_deleted) =
             cleanup_old_data(&conn, retention_days).context("Failed to cleanup old data")?;
         info!(
-            "Deleted {} metrics and {} log entries",
-            metrics_deleted, logs_deleted
+            "Deleted {} metrics, {} log entries, and {} system checks",
+            metrics_deleted, logs_deleted, checks_deleted
         );
         return Ok(());
     }
@@ -232,68 +236,290 @@ fn main() -> Result<()> {
     if args.system_checks {
         use systers::system_checks::*;
 
-        info!("Running enhanced system checks...");
+        println!("\n╔════════════════════════════════════════════════════════════════╗");
+        println!("║           ENHANCED SYSTEM CHECKS                               ║");
+        println!("╚════════════════════════════════════════════════════════════════╝\n");
+
+        // Track which checks can run
+        let mut active_checks = Vec::new();
+        let mut unavailable_checks = Vec::new();
 
         // Check for package updates
-        match check_package_updates() {
-            Ok(updates) => {
-                if updates.updates_available > 0 {
-                    info!(
-                        "Package updates: {} available ({} security)",
-                        updates.updates_available, updates.security_updates
-                    );
-                } else {
-                    info!("Package updates: System is up to date");
-                }
-            }
-            Err(e) => {
-                debug!("Package update check failed: {}", e);
-            }
-        }
+        if is_command_available("apt") || is_command_available("dnf") {
+            active_checks.push("Package Updates");
+            println!("✓ Running: Package Update Check");
+            match check_package_updates() {
+                Ok(updates) => {
+                    let message = if updates.updates_available > 0 {
+                        format!(
+                            "{} updates available ({} security) [{}]",
+                            updates.updates_available, updates.security_updates, updates.package_manager
+                        )
+                    } else {
+                        format!("System is up to date [{}]", updates.package_manager)
+                    };
+                    println!("  → {}", message);
 
-        // Check systemd status
-        match check_systemd_status() {
-            Ok(status) => {
-                info!(
-                    "Systemd services: {} total, {} active, {} failed",
-                    status.total_services, status.active_services, status.failed_services
-                );
-                if !status.failed_service_names.is_empty() {
-                    warn!("Failed services: {}", status.failed_service_names.join(", "));
+                    // Store in database
+                    let check_result = SystemCheckResult {
+                        timestamp: Utc::now(),
+                        check_name: "Package Updates".to_string(),
+                        check_type: "package_manager".to_string(),
+                        status: if updates.updates_available > 0 {
+                            "warning"
+                        } else {
+                            "ok"
+                        }
+                        .to_string(),
+                        value: Some(updates.updates_available.to_string()),
+                        message,
+                    };
+                    if let Err(e) = insert_system_check(&conn, &check_result) {
+                        warn!("Failed to store package update check result: {}", e);
+                    }
                 }
-            }
-            Err(e) => {
-                debug!("Systemd status check failed: {}", e);
-            }
-        }
-
-        // Check SMART disk health
-        match check_disk_health() {
-            Ok(disks) => {
-                for disk in &disks {
-                    info!("Disk {}: {}", disk.device, disk.health_status);
-                    if disk.health_status != "PASSED" {
-                        warn!("Disk {} health check failed!", disk.device);
+                Err(e) => {
+                    println!("  → Failed: {} (may need sudo)", e);
+                    let check_result = SystemCheckResult {
+                        timestamp: Utc::now(),
+                        check_name: "Package Updates".to_string(),
+                        check_type: "package_manager".to_string(),
+                        status: "error".to_string(),
+                        value: None,
+                        message: format!("Check failed: {}", e),
+                    };
+                    if let Err(e) = insert_system_check(&conn, &check_result) {
+                        warn!("Failed to store package update check result: {}", e);
                     }
                 }
             }
-            Err(e) => {
-                debug!("SMART health check failed: {} (may need sudo)", e);
+            println!();
+        } else {
+            unavailable_checks.push(("Package Updates", "apt or dnf", "Pre-installed on most systems"));
+        }
+
+        // Check systemd status
+        if is_command_available("systemctl") {
+            active_checks.push("Systemd Services");
+            println!("✓ Running: Systemd Service Status");
+            match check_systemd_status() {
+                Ok(status) => {
+                    println!("  → Total services: {}", status.total_services);
+                    println!("  → Active services: {}", status.active_services);
+                    if status.failed_services > 0 {
+                        println!("  → ⚠️  Failed services: {}", status.failed_services);
+                        for service in &status.failed_service_names {
+                            println!("     - {}", service);
+                        }
+                    } else {
+                        println!("  → Failed services: 0");
+                    }
+
+                    // Store in database
+                    let message = if status.failed_services > 0 {
+                        format!(
+                            "Total: {}, Active: {}, Failed: {} ({})",
+                            status.total_services,
+                            status.active_services,
+                            status.failed_services,
+                            status.failed_service_names.join(", ")
+                        )
+                    } else {
+                        format!(
+                            "Total: {}, Active: {}, Failed: 0",
+                            status.total_services, status.active_services
+                        )
+                    };
+
+                    let check_result = SystemCheckResult {
+                        timestamp: Utc::now(),
+                        check_name: "Systemd Services".to_string(),
+                        check_type: "systemd".to_string(),
+                        status: if status.failed_services > 0 {
+                            "warning"
+                        } else {
+                            "ok"
+                        }
+                        .to_string(),
+                        value: Some(status.failed_services.to_string()),
+                        message,
+                    };
+                    if let Err(e) = insert_system_check(&conn, &check_result) {
+                        warn!("Failed to store systemd check result: {}", e);
+                    }
+                }
+                Err(e) => {
+                    println!("  → Failed: {}", e);
+                    let check_result = SystemCheckResult {
+                        timestamp: Utc::now(),
+                        check_name: "Systemd Services".to_string(),
+                        check_type: "systemd".to_string(),
+                        status: "error".to_string(),
+                        value: None,
+                        message: format!("Check failed: {}", e),
+                    };
+                    if let Err(e) = insert_system_check(&conn, &check_result) {
+                        warn!("Failed to store systemd check result: {}", e);
+                    }
+                }
             }
+            println!();
+        } else {
+            unavailable_checks.push(("Systemd Services", "systemctl", "Pre-installed on systemd systems"));
+        }
+
+        // Check SMART disk health
+        if is_command_available("smartctl") {
+            active_checks.push("SMART Disk Health");
+            println!("✓ Running: SMART Disk Health Check");
+            match check_disk_health() {
+                Ok(disks) => {
+                    if disks.is_empty() {
+                        println!("  → No disks found or unable to access (may need sudo)");
+                        let check_result = SystemCheckResult {
+                            timestamp: Utc::now(),
+                            check_name: "SMART Disk Health".to_string(),
+                            check_type: "disk_health".to_string(),
+                            status: "warning".to_string(),
+                            value: Some("0".to_string()),
+                            message: "No disks found or unable to access".to_string(),
+                        };
+                        if let Err(e) = insert_system_check(&conn, &check_result) {
+                            warn!("Failed to store disk health check result: {}", e);
+                        }
+                    } else {
+                        for disk in &disks {
+                            let status_icon = if disk.health_status == "PASSED" { "✓" } else { "⚠️" };
+                            println!("  → {} {}: {}", status_icon, disk.device, disk.health_status);
+                        }
+
+                        // Store aggregated disk health in database
+                        let failed_disks: Vec<_> = disks
+                            .iter()
+                            .filter(|d| d.health_status != "PASSED")
+                            .collect();
+                        let message = if failed_disks.is_empty() {
+                            format!("All {} disk(s) healthy", disks.len())
+                        } else {
+                            format!(
+                                "{} of {} disk(s) have issues: {}",
+                                failed_disks.len(),
+                                disks.len(),
+                                failed_disks
+                                    .iter()
+                                    .map(|d| format!("{} ({})", d.device, d.health_status))
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            )
+                        };
+
+                        let check_result = SystemCheckResult {
+                            timestamp: Utc::now(),
+                            check_name: "SMART Disk Health".to_string(),
+                            check_type: "disk_health".to_string(),
+                            status: if failed_disks.is_empty() {
+                                "ok"
+                            } else {
+                                "critical"
+                            }
+                            .to_string(),
+                            value: Some(failed_disks.len().to_string()),
+                            message,
+                        };
+                        if let Err(e) = insert_system_check(&conn, &check_result) {
+                            warn!("Failed to store disk health check result: {}", e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    println!("  → Failed: {} (requires sudo)", e);
+                    let check_result = SystemCheckResult {
+                        timestamp: Utc::now(),
+                        check_name: "SMART Disk Health".to_string(),
+                        check_type: "disk_health".to_string(),
+                        status: "error".to_string(),
+                        value: None,
+                        message: format!("Check failed: {}", e),
+                    };
+                    if let Err(e) = insert_system_check(&conn, &check_result) {
+                        warn!("Failed to store disk health check result: {}", e);
+                    }
+                }
+            }
+            println!();
+        } else {
+            unavailable_checks.push(("SMART Disk Health", "smartctl", "sudo apt install smartmontools"));
         }
 
         // Find large directories
-        match find_large_directories("/", 2, 10) {
-            Ok(dirs) => {
-                info!("Top directories by size:");
-                for (i, dir) in dirs.iter().take(5).enumerate() {
-                    info!("  {}. {} - {}", i + 1, dir.path, dir.size_human);
+        if is_command_available("du") {
+            active_checks.push("Directory Sizes");
+            println!("✓ Running: Top Directories by Size");
+            match find_large_directories("/", 2, 10) {
+                Ok(dirs) => {
+                    for (i, dir) in dirs.iter().take(5).enumerate() {
+                        println!("  → {}. {} - {}", i + 1, dir.path, dir.size_human);
+                    }
+
+                    // Store in database
+                    let top_dirs = dirs
+                        .iter()
+                        .take(5)
+                        .map(|d| format!("{}: {}", d.path, d.size_human))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+
+                    let check_result = SystemCheckResult {
+                        timestamp: Utc::now(),
+                        check_name: "Directory Sizes".to_string(),
+                        check_type: "disk_usage".to_string(),
+                        status: "info".to_string(),
+                        value: Some(dirs.len().to_string()),
+                        message: format!("Top directories: {}", top_dirs),
+                    };
+                    if let Err(e) = insert_system_check(&conn, &check_result) {
+                        warn!("Failed to store directory size check result: {}", e);
+                    }
+                }
+                Err(e) => {
+                    println!("  → Failed: {}", e);
+                    let check_result = SystemCheckResult {
+                        timestamp: Utc::now(),
+                        check_name: "Directory Sizes".to_string(),
+                        check_type: "disk_usage".to_string(),
+                        status: "error".to_string(),
+                        value: None,
+                        message: format!("Check failed: {}", e),
+                    };
+                    if let Err(e) = insert_system_check(&conn, &check_result) {
+                        warn!("Failed to store directory size check result: {}", e);
+                    }
                 }
             }
-            Err(e) => {
-                debug!("Directory size check failed: {}", e);
-            }
+            println!();
+        } else {
+            unavailable_checks.push(("Directory Sizes", "du", "Pre-installed (coreutils)"));
         }
+
+        // Summary
+        println!("─────────────────────────────────────────────────────────────────");
+        println!("SUMMARY:");
+        println!("  Active Checks: {}", active_checks.len());
+        for check in &active_checks {
+            println!("    ✓ {}", check);
+        }
+
+        if !unavailable_checks.is_empty() {
+            println!("\n  Available Checks (not enabled - missing tools):");
+            for (check, tool, install) in &unavailable_checks {
+                println!("    ✗ {} (requires: {})", check, tool);
+                println!("      Install: {}", install);
+            }
+            println!("\n  Tip: Run 'syswriter --show-tools' for more details");
+        }
+        println!("═════════════════════════════════════════════════════════════════\n");
+
+        info!("Enhanced system checks complete");
     }
 
     // Automatic cleanup of old data
@@ -303,11 +529,11 @@ fn main() -> Result<()> {
             retention_days
         );
         match cleanup_old_data(&conn, retention_days) {
-            Ok((metrics_deleted, logs_deleted)) => {
-                if metrics_deleted > 0 || logs_deleted > 0 {
+            Ok((metrics_deleted, logs_deleted, checks_deleted)) => {
+                if metrics_deleted > 0 || logs_deleted > 0 || checks_deleted > 0 {
                     info!(
-                        "Deleted {} metrics and {} log entries",
-                        metrics_deleted, logs_deleted
+                        "Deleted {} metrics, {} log entries, and {} system checks",
+                        metrics_deleted, logs_deleted, checks_deleted
                     );
                 }
             }

@@ -149,6 +149,47 @@ syswriter
 syswriter --system-checks
 ```
 
+When you run `--system-checks`, you'll see:
+- Which checks are actively running
+- Results from each check
+- Which checks could be enabled if you install missing tools
+- Installation instructions for missing tools
+
+**Example output:**
+```
+╔════════════════════════════════════════════════════════════════╗
+║           ENHANCED SYSTEM CHECKS                               ║
+╚════════════════════════════════════════════════════════════════╝
+
+✓ Running: Package Update Check
+  → 2 updates available (0 security) [apt]
+
+✓ Running: Systemd Service Status
+  → Total services: 189
+  → Active services: 63
+  → ⚠️  Failed services: 1
+     - logrotate.service
+
+✓ Running: SMART Disk Health Check
+  → No disks found or unable to access (may need sudo)
+
+✓ Running: Top Directories by Size
+  → 1. / - 234.56 GB
+  → 2. /home - 89.12 GB
+
+─────────────────────────────────────────────────────────────────
+SUMMARY:
+  Active Checks: 4
+    ✓ Package Updates
+    ✓ Systemd Services
+    ✓ SMART Disk Health
+    ✓ Directory Sizes
+
+  Available Checks (not enabled - missing tools):
+    ✗ Network Usage (requires: iftop)
+      Install: sudo apt install iftop
+```
+
 **Enhanced checks include:**
 - **Package Updates**: Checks for available system updates (apt/dnf)
 - **Systemd Services**: Reports failed services and service status

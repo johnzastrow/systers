@@ -6,7 +6,7 @@ use serde::Serialize;
 use std::path::Path;
 
 /// Database schema version
-pub const SCHEMA_VERSION: i32 = 2;
+pub const SCHEMA_VERSION: i32 = 3;
 
 /// System metrics record
 #[derive(Debug, Clone, Serialize)]
@@ -30,6 +30,17 @@ pub struct LogEntry {
     pub timestamp: DateTime<Utc>,
     pub level: String,
     pub source: String,
+    pub message: String,
+}
+
+/// System check result record
+#[derive(Debug, Clone, Serialize)]
+pub struct SystemCheckResult {
+    pub timestamp: DateTime<Utc>,
+    pub check_name: String,
+    pub check_type: String,
+    pub status: String,
+    pub value: Option<String>,
     pub message: String,
 }
 
@@ -170,6 +181,41 @@ fn migrate_v1_to_v2(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Migrate from schema v2 to v3 (add system_checks table)
+fn migrate_v2_to_v3(conn: &Connection) -> Result<()> {
+    info!("Migrating database from schema v2 to v3...");
+
+    // Create system_checks table (new in v3)
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS system_checks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp INTEGER NOT NULL,
+            check_name TEXT NOT NULL,
+            check_type TEXT NOT NULL,
+            status TEXT NOT NULL,
+            value TEXT,
+            message TEXT NOT NULL
+        )",
+        [],
+    )?;
+
+    // Create index for better query performance
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_checks_timestamp
+         ON system_checks(timestamp)",
+        [],
+    )?;
+
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_checks_type
+         ON system_checks(check_type)",
+        [],
+    )?;
+
+    info!("Migration to schema v3 complete");
+    Ok(())
+}
+
 /// Initialize the database with required schema
 pub fn init_database<P: AsRef<Path>>(db_path: P) -> Result<Connection> {
     let path_ref = db_path.as_ref();
@@ -189,11 +235,16 @@ pub fn init_database<P: AsRef<Path>>(db_path: P) -> Result<Connection> {
 
     // Perform migrations if needed
     if current_version == 0 {
-        // Fresh database - create v2 schema directly
-        info!("Creating fresh database with schema v2");
+        // Fresh database - create v3 schema directly
+        info!("Creating fresh database with schema v3");
     } else if current_version == 1 {
         // Migrate from v1 to v2
         migrate_v1_to_v2(&conn)?;
+        // Then migrate from v2 to v3
+        migrate_v2_to_v3(&conn)?;
+    } else if current_version == 2 {
+        // Migrate from v2 to v3
+        migrate_v2_to_v3(&conn)?;
     } else if current_version > SCHEMA_VERSION {
         warn!(
             "Database schema version ({}) is newer than application version ({})",
@@ -231,6 +282,19 @@ pub fn init_database<P: AsRef<Path>>(db_path: P) -> Result<Connection> {
         [],
     )?;
 
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS system_checks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp INTEGER NOT NULL,
+            check_name TEXT NOT NULL,
+            check_type TEXT NOT NULL,
+            status TEXT NOT NULL,
+            value TEXT,
+            message TEXT NOT NULL
+        )",
+        [],
+    )?;
+
     // Create indices for better query performance
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_metrics_timestamp
@@ -247,6 +311,18 @@ pub fn init_database<P: AsRef<Path>>(db_path: P) -> Result<Connection> {
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_logs_level
          ON log_entries(level)",
+        [],
+    )?;
+
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_checks_timestamp
+         ON system_checks(timestamp)",
+        [],
+    )?;
+
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_checks_type
+         ON system_checks(check_type)",
         [],
     )?;
 
@@ -306,6 +382,23 @@ pub fn insert_log_entry(conn: &Connection, entry: &LogEntry) -> Result<()> {
             entry.level,
             entry.source,
             entry.message,
+        ],
+    )?;
+    Ok(())
+}
+
+/// Insert system check result into database
+pub fn insert_system_check(conn: &Connection, check: &SystemCheckResult) -> Result<()> {
+    conn.execute(
+        "INSERT INTO system_checks (timestamp, check_name, check_type, status, value, message)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![
+            check.timestamp.timestamp(), // Unix timestamp in seconds
+            check.check_name,
+            check.check_type,
+            check.status,
+            check.value,
+            check.message,
         ],
     )?;
     Ok(())
@@ -419,9 +512,55 @@ pub fn query_logs(
     Ok(results)
 }
 
+/// Query system check results within a time range
+pub fn query_system_checks(
+    conn: &Connection,
+    start: DateTime<Utc>,
+    end: DateTime<Utc>,
+) -> Result<Vec<SystemCheckResult>> {
+    let mut stmt = conn.prepare(
+        "SELECT timestamp, check_name, check_type, status, value, message
+         FROM system_checks
+         WHERE timestamp >= ?1 AND timestamp <= ?2
+         ORDER BY timestamp DESC",
+    )?;
+
+    let start_ts = start.timestamp();
+    let end_ts = end.timestamp();
+
+    let checks_iter = stmt.query_map(params![start_ts, end_ts], |row| {
+        let timestamp_i64: i64 = row.get(0)?;
+        let timestamp = Utc.timestamp_opt(timestamp_i64, 0)
+            .single()
+            .ok_or_else(|| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    0,
+                    rusqlite::types::Type::Integer,
+                    Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid timestamp")),
+                )
+            })?;
+
+        Ok(SystemCheckResult {
+            timestamp,
+            check_name: row.get(1)?,
+            check_type: row.get(2)?,
+            status: row.get(3)?,
+            value: row.get(4)?,
+            message: row.get(5)?,
+        })
+    })?;
+
+    let mut results = Vec::new();
+    for check in checks_iter {
+        results.push(check?);
+    }
+
+    Ok(results)
+}
+
 /// Delete old data beyond the retention period
-/// Returns tuple of (metrics_deleted, logs_deleted)
-pub fn cleanup_old_data(conn: &Connection, retention_days: i64) -> Result<(usize, usize)> {
+/// Returns tuple of (metrics_deleted, logs_deleted, checks_deleted)
+pub fn cleanup_old_data(conn: &Connection, retention_days: i64) -> Result<(usize, usize, usize)> {
     let cutoff_date = chrono::Utc::now() - chrono::Duration::days(retention_days);
     let cutoff_ts = cutoff_date.timestamp();
 
@@ -437,8 +576,14 @@ pub fn cleanup_old_data(conn: &Connection, retention_days: i64) -> Result<(usize
         params![cutoff_ts],
     )?;
 
+    // Delete old system checks
+    let checks_deleted = conn.execute(
+        "DELETE FROM system_checks WHERE timestamp < ?1",
+        params![cutoff_ts],
+    )?;
+
     // Vacuum to reclaim space
     conn.execute("VACUUM", [])?;
 
-    Ok((metrics_deleted, logs_deleted))
+    Ok((metrics_deleted, logs_deleted, checks_deleted))
 }

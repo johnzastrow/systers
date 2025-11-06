@@ -19,11 +19,12 @@ fn test_init_database() -> Result<()> {
     assert!(tables.contains(&"schema_version".to_string()));
     assert!(tables.contains(&"system_metrics".to_string()));
     assert!(tables.contains(&"log_entries".to_string()));
+    assert!(tables.contains(&"system_checks".to_string()));
 
     // Verify schema version is set
     let version: i32 =
         conn.query_row("SELECT version FROM schema_version", [], |row| row.get(0))?;
-    assert_eq!(version, 2);
+    assert_eq!(version, 3);
 
     // Verify app version is set
     let app_version: String =
@@ -184,6 +185,8 @@ fn test_indices_exist() -> Result<()> {
     assert!(indices.contains(&"idx_metrics_timestamp".to_string()));
     assert!(indices.contains(&"idx_logs_timestamp".to_string()));
     assert!(indices.contains(&"idx_logs_level".to_string()));
+    assert!(indices.contains(&"idx_checks_timestamp".to_string()));
+    assert!(indices.contains(&"idx_checks_type".to_string()));
 
     Ok(())
 }
@@ -242,11 +245,13 @@ fn test_cleanup_old_data() -> Result<()> {
     }
 
     // Cleanup data older than 30 days
-    let (metrics_deleted, logs_deleted) = cleanup_old_data(&conn, 30)?;
+    let (metrics_deleted, logs_deleted, checks_deleted) = cleanup_old_data(&conn, 30)?;
 
     // Should have deleted 4 old metrics and 2 old logs
     assert_eq!(metrics_deleted, 4);
     assert_eq!(logs_deleted, 2);
+    // No system checks in this test
+    assert_eq!(checks_deleted, 0);
 
     // Verify remaining data
     let start = now - Duration::days(100);

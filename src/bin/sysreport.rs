@@ -75,11 +75,11 @@ fn main() -> Result<()> {
     let conn = Connection::open(&db_path).context("Failed to open database")?;
 
     // Generate report
-    let (metrics, logs) =
+    let (metrics, logs, system_checks) =
         generate_report(&conn, args.hours).context("Failed to generate report")?;
 
     // Export report in the specified format
-    let report_content = export_report(&metrics, &logs, export_format)
+    let report_content = export_report(&metrics, &logs, &system_checks, export_format)
         .context("Failed to export report")?;
 
     // Write to file or stdout

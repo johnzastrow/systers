@@ -2,7 +2,7 @@ use crate::config::{
     CPU_WARNING_THRESHOLD, DISK_WARNING_THRESHOLD, ERROR_COUNT_THRESHOLD, LOAD_WARNING_THRESHOLD,
     MAX_RECENT_ERRORS_DISPLAY, MEMORY_WARNING_THRESHOLD,
 };
-use crate::db::{query_logs, query_metrics, LogEntry};
+use crate::db::{query_logs, query_metrics, query_system_checks, LogEntry, SystemCheckResult};
 use anyhow::{Context, Result};
 use chrono::{DateTime, Duration, Local, Utc};
 use rusqlite::Connection;
@@ -33,8 +33,22 @@ pub struct LogReport {
     pub recent_errors: Vec<LogEntry>,
 }
 
+/// Report for system checks
+#[derive(Debug, Serialize, Clone)]
+pub struct SystemChecksReport {
+    pub checks: Vec<SystemCheckResult>,
+    pub total_checks: usize,
+    pub checks_ok: usize,
+    pub checks_warning: usize,
+    pub checks_critical: usize,
+    pub checks_error: usize,
+}
+
 /// Generate a comprehensive system report
-pub fn generate_report(conn: &Connection, hours_back: i64) -> Result<(MetricsReport, LogReport)> {
+pub fn generate_report(
+    conn: &Connection,
+    hours_back: i64,
+) -> Result<(MetricsReport, LogReport, SystemChecksReport)> {
     let end = Utc::now();
     let start = end - Duration::hours(hours_back);
 
@@ -152,11 +166,41 @@ pub fn generate_report(conn: &Connection, hours_back: i64) -> Result<(MetricsRep
         recent_errors,
     };
 
-    Ok((metrics_report, log_report))
+    // Query system checks
+    let system_checks = query_system_checks(conn, start, end).unwrap_or_else(|_| Vec::new());
+
+    let checks_ok = system_checks.iter().filter(|c| c.status == "ok").count();
+    let checks_warning = system_checks
+        .iter()
+        .filter(|c| c.status == "warning")
+        .count();
+    let checks_critical = system_checks
+        .iter()
+        .filter(|c| c.status == "critical")
+        .count();
+    let checks_error = system_checks
+        .iter()
+        .filter(|c| c.status == "error")
+        .count();
+
+    let system_checks_report = SystemChecksReport {
+        total_checks: system_checks.len(),
+        checks_ok,
+        checks_warning,
+        checks_critical,
+        checks_error,
+        checks: system_checks,
+    };
+
+    Ok((metrics_report, log_report, system_checks_report))
 }
 
 /// Format report for terminal display
-pub fn format_report(metrics: &MetricsReport, logs: &LogReport) -> String {
+pub fn format_report(
+    metrics: &MetricsReport,
+    logs: &LogReport,
+    system_checks: &SystemChecksReport,
+) -> String {
     let mut output = String::new();
 
     output.push_str("╔════════════════════════════════════════════════════════════════╗\n");
@@ -239,6 +283,64 @@ pub fn format_report(metrics: &MetricsReport, logs: &LogReport) -> String {
         output.push('\n');
     }
 
+    // System checks section
+    if system_checks.total_checks > 0 {
+        output.push_str("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
+        output.push_str("  ENHANCED SYSTEM CHECKS\n");
+        output.push_str("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n");
+
+        output.push_str(&format!(
+            "Total Checks: {} (✓ {} OK, ⚠️  {} Warning, 🔴 {} Critical, ✗ {} Error)\n\n",
+            system_checks.total_checks,
+            system_checks.checks_ok,
+            system_checks.checks_warning,
+            system_checks.checks_critical,
+            system_checks.checks_error
+        ));
+
+        // Group checks by type
+        let mut check_types: std::collections::HashMap<String, Vec<&SystemCheckResult>> =
+            std::collections::HashMap::new();
+        for check in &system_checks.checks {
+            check_types
+                .entry(check.check_name.clone())
+                .or_insert_with(Vec::new)
+                .push(check);
+        }
+
+        for (check_name, checks) in check_types.iter() {
+            // Show most recent check for each type
+            if let Some(latest_check) = checks.last() {
+                let status_icon = match latest_check.status.as_str() {
+                    "ok" => "✓",
+                    "warning" => "⚠️",
+                    "critical" => "🔴",
+                    "error" => "✗",
+                    _ => "•",
+                };
+
+                let local_time: DateTime<Local> = latest_check.timestamp.into();
+                output.push_str(&format!(
+                    "{} {} [{}] ({})\n",
+                    status_icon,
+                    check_name,
+                    latest_check.status.to_uppercase(),
+                    local_time.format("%Y-%m-%d %H:%M:%S")
+                ));
+                output.push_str(&format!("   {}\n", latest_check.message));
+
+                // If there are warnings/critical/errors, add them to issues
+                if latest_check.status == "warning"
+                    || latest_check.status == "critical"
+                    || latest_check.status == "error"
+                {
+                    output.push('\n');
+                }
+            }
+        }
+        output.push('\n');
+    }
+
     if !metrics.issues.is_empty() {
         output.push_str("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
         output.push_str("  ⚠️  ISSUES DETECTED\n");
@@ -290,6 +392,7 @@ pub struct FullReport {
     pub version: String,
     pub metrics: MetricsReport,
     pub logs: LogReport,
+    pub system_checks: SystemChecksReport,
 }
 
 /// Export format for reports
@@ -313,6 +416,7 @@ impl ExportFormat {
 pub fn export_report(
     metrics: &MetricsReport,
     logs: &LogReport,
+    system_checks: &SystemChecksReport,
     format: ExportFormat,
 ) -> Result<String> {
     match format {
@@ -321,11 +425,12 @@ pub fn export_report(
                 version: crate::VERSION.to_string(),
                 metrics: metrics.clone(),
                 logs: logs.clone(),
+                system_checks: system_checks.clone(),
             };
             serde_json::to_string_pretty(&full_report)
                 .context("Failed to serialize report to JSON")
         }
-        ExportFormat::Text => Ok(format_report(metrics, logs)),
+        ExportFormat::Text => Ok(format_report(metrics, logs, system_checks)),
     }
 }
 

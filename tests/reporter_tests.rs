@@ -8,12 +8,13 @@ use systers::reporter::{format_report, generate_report};
 #[test]
 fn test_generate_report_no_data() -> Result<()> {
     let conn = init_database(":memory:")?;
-    let (metrics, logs) = generate_report(&conn, 24)?;
+    let (metrics, logs, system_checks) = generate_report(&conn, 24)?;
 
     assert_eq!(metrics.avg_cpu_usage, 0.0);
     assert_eq!(metrics.max_cpu_usage, 0.0);
     assert_eq!(logs.total_errors, 0);
     assert_eq!(logs.total_warnings, 0);
+    assert_eq!(system_checks.total_checks, 0);
     assert!(!metrics.issues.is_empty()); // Should have "No data available" message
 
     Ok(())
@@ -54,7 +55,7 @@ fn test_generate_report_with_data() -> Result<()> {
         insert_log_entry(&conn, &error)?;
     }
 
-    let (metrics, logs) = generate_report(&conn, 24)?;
+    let (metrics, logs, _system_checks) = generate_report(&conn, 24)?;
 
     assert!(metrics.avg_cpu_usage > 0.0);
     assert!(metrics.max_cpu_usage > 0.0);
@@ -86,7 +87,7 @@ fn test_issue_detection_high_cpu() -> Result<()> {
     };
     insert_metrics(&conn, &metrics)?;
 
-    let (report, _) = generate_report(&conn, 1)?;
+    let (report, _, _) = generate_report(&conn, 1)?;
 
     // Should detect high CPU issue
     assert!(!report.issues.is_empty());
@@ -117,7 +118,7 @@ fn test_issue_detection_high_memory() -> Result<()> {
     };
     insert_metrics(&conn, &metrics)?;
 
-    let (report, _) = generate_report(&conn, 1)?;
+    let (report, _, _) = generate_report(&conn, 1)?;
 
     // Should detect high memory issue
     assert!(!report.issues.is_empty());
@@ -148,7 +149,7 @@ fn test_issue_detection_high_disk() -> Result<()> {
     };
     insert_metrics(&conn, &metrics)?;
 
-    let (report, _) = generate_report(&conn, 1)?;
+    let (report, _, _) = generate_report(&conn, 1)?;
 
     // Should detect high disk issue
     assert!(!report.issues.is_empty());
@@ -179,8 +180,8 @@ fn test_format_report() -> Result<()> {
     };
     insert_metrics(&conn, &metrics)?;
 
-    let (metrics_report, logs_report) = generate_report(&conn, 1)?;
-    let report = format_report(&metrics_report, &logs_report);
+    let (metrics_report, logs_report, system_checks_report) = generate_report(&conn, 1)?;
+    let report = format_report(&metrics_report, &logs_report, &system_checks_report);
 
     // Verify report contains expected sections
     assert!(report.contains("SYSTERS"));
@@ -223,7 +224,7 @@ fn test_statistics_calculations() -> Result<()> {
         insert_metrics(&conn, &metrics)?;
     }
 
-    let (report, _) = generate_report(&conn, 24)?;
+    let (report, _, _) = generate_report(&conn, 24)?;
 
     // Average CPU should be 30.0 (10+20+30+40+50)/5
     assert_eq!(report.avg_cpu_usage, 30.0);

@@ -66,7 +66,8 @@ Implemented comprehensive YAML configuration system with sensible Debian default
 - ✅ `--show-tools` flag to list available/missing tools
 
 **Still To Do:**
-- [ ] a. Track directory size changes over time (trending)
+- [ ] a. Allow syswriter to read system state for a configurable and longer period (e.g., 1 minute) to gather more accurate CPU, disk I/O and network stats
+- [ ] a1. Track directory size changes over time (trending)
 - [ ] b. Mail message monitoring
 - [ ] c. Process network usage tracking
 - [ ] d. Process disk I/O monitoring

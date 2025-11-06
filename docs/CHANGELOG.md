@@ -17,11 +17,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Top directories by size analysis
   - External tool detection with installation hints
   - Graceful fallback when tools are not available
+  - Detailed output showing active checks and results in real-time
+  - Summary report at end showing all active checks and missing tools
+  - **System check results now stored in database and displayed in sysreport**
+  - New "Enhanced System Checks" section in reports showing check status, timestamps, and messages
+  - System checks included in JSON export format for automation
 - New `system_checks` module with helper functions for system analysis
+- Database schema v3 with `system_checks` table for storing check results
 
 ### Changed
-- syswriter now reports enhanced system information when --system-checks flag is used
-- User-friendly messages guide users to install optional tools
+- Database schema upgraded from v2 to v3 (automatic migration)
+- syswriter now stores system check results in database when --system-checks flag is used
+- sysreport now displays system check results in dedicated section
+- Enhanced checks display which checks are running and which could be enabled
+- User-friendly messages guide users to install optional tools with specific commands
+- Clear visual feedback with ✓, ⚠️, 🔴, and ✗ symbols for check status (ok, warning, critical, error)
+- Report exports (JSON and text) now include system check data
 
 ## [0.4.0] - 2025-11-06
 
